@@ -185,6 +185,8 @@
   .gpu-h { display:flex; align-items:baseline; gap:6px; font-size:11px; color:var(--tx3); }
   .gpu-h .gpu-nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .gpu-h .gpu-util { font-family:var(--mono); font-size:10px; color:var(--tx4); }
+  .ogmark { margin-left:6px; font-size:9px; padding:0 5px; border-radius:6px;
+            background:rgba(59,130,246,.18); color:var(--acc,#3b82f6); vertical-align:middle; }
   .gpu-bar { height:4px; border-radius:2px; background:var(--layer2); overflow:hidden; margin:4px 0 3px; }
   .gpu-bar > i { display:block; height:100%; width:0; background:var(--acc); transition:width .4s; }
   .gpu-meta { display:flex; justify-content:space-between; font-family:var(--mono); font-size:9.5px; color:var(--tx4); }
@@ -278,6 +280,9 @@
   .opullprog { margin-top:8px; }
   .opullprog .obar { height:6px; border-radius:3px; background:var(--layer2); overflow:hidden; }
   .opullprog .obar > i { display:block; height:100%; width:0; background:linear-gradient(90deg,#3b82f6,#6366f1); transition:width .25s; }
+  .gpuinfo { font-size:11.5px; color:var(--tx4); background:var(--layer2); border-radius:8px;
+             padding:8px 11px; margin-bottom:10px; font-family:var(--mono); line-height:1.5; }
+  .hint2 { font-size:10.5px; color:var(--tx4); margin-left:4px; }
   .pullpath { margin-top:7px; font-size:11px; color:var(--tx4); font-family:var(--mono);
               display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .pullpath b { color:var(--tx3); font-weight:500; }
@@ -418,13 +423,14 @@
   <button class="mx" id="pm_close" title="关闭">✕</button>
   <h3 id="pm_title">启动参数</h3>
   <div class="sub">保存后点「加载」时按这些参数拉起模型。聊天页顶部只**读取**这些值（ctx / 温度 / 最长），不再单独设置——所以温度、上下文、最长输出都在这里改，留空则用模型默认值</div>
+  <div class="gpuinfo" id="pm_gpuinfo">Ollama 当前使用显卡：读取中…</div>
   <div class="frow">
     <div class="f" style="flex:1"><label>显示名称（模型切换按钮/菜单上用，留空则显示完整模型名）</label>
       <input id="pm_alias" maxlength="40" placeholder="如 frognano"></div>
   </div>
   <div class="frow">
     <div class="f"><label>上下文 num_ctx</label><input id="pm_ctx" type="number" placeholder="如 32768"></div>
-    <div class="f"><label>GPU 层数 num_gpu</label><input id="pm_gpu" type="number" placeholder="99 = 全部卸载到 GPU"></div>
+    <div class="f"><label>GPU 层数 num_gpu<span class="hint2">（只控层数，不选卡）</span></label><input id="pm_gpu" type="number" placeholder="99 = 全部卸载到 GPU"></div>
     <div class="f"><label>批大小 num_batch</label><input id="pm_batch" type="number" placeholder="如 512"></div>
     <div class="f"><label>CPU 线程 num_thread</label><input id="pm_thread" type="number" placeholder="留空 = 自动"></div>
     <div class="f"><label>温度 temperature</label><input id="pm_temp" type="number" step="0.05" min="0" max="2" placeholder="如 0.3"></div>
@@ -1008,10 +1014,13 @@ async function drawGpuPanel() {
     <div class="gpu-meta"><span>可用 ${bytes(Math.max(0, (mem.total || 0) - (mem.used || 0)))}</span><span>${memPct}%</span></div>
   </div>`;
   // GPU
+  const og = d.ollama_gpu || {};
+  const ogIdx = new Set((og.cards || []).map(c => String(c.index)));
   html += gpus.map(g => {
     const pct = g.total ? Math.round(g.used / g.total * 100) : 0;
+    const mark = ogIdx.has(String(g.index)) ? '<span class="ogmark" title="Ollama 使用此卡">Ollama</span>' : '';
     return `<div class="gpu" title="GPU${g.index} ${esc(g.name)}">
-      <div class="gpu-h"><span class="gpu-nm">${esc(shortGpuName(g.name))}</span><span class="gpu-util">${esc(g.util)}% · ${esc(g.temp)}°C</span></div>
+      <div class="gpu-h"><span class="gpu-nm">${esc(shortGpuName(g.name))}${mark}</span><span class="gpu-util">${esc(g.util)}% · ${esc(g.temp)}°C</span></div>
       ${bar(pct, level(pct))}
       <div class="gpu-meta"><span>${fmt(g.used)}/${fmt(g.total)} MiB</span><span>${pct}%</span></div>
     </div>`;
@@ -1899,8 +1908,22 @@ function fillParamsForm(p) {
     keepSel.appendChild(opt); keepSel.value = String(savedKeep);
   }
 }
+async function paintGpuInfo() {
+  const el = $('pm_gpuinfo');
+  if (!el) return;
+  try {
+    const d = await (await fetch('/__sys')).json();
+    const og = d.ollama_gpu || {};
+    const cards = (og.cards || []).map(c => 'GPU' + c.index + ' ' + c.name.replace(/NVIDIA\s+|GeForce\s+/gi, ''));
+    el.innerHTML = cards.length
+      ? 'Ollama 只使用：<b>' + esc(cards.join(' / ')) + '</b>（服务级 CUDA_VISIBLE_DEVICES 决定）<br>'
+        + '<span style="opacity:.8">Ollama 不支持按模型选卡；要换卡需改服务环境变量并重启 ollama</span>'
+      : 'Ollama 当前对全部显卡可见' + (og.all ? '' : '（' + esc(og.visible || '') + '）');
+  } catch { el.textContent = 'Ollama 当前使用显卡：读取失败'; }
+}
 function openParams(name) {
   pmModel = name;
+  paintGpuInfo();
   $('pm_title').textContent = '启动参数 · ' + name;
   fillParamsForm(allParams[name] || {});
   $('pmask').classList.add('on');

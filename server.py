@@ -334,6 +334,32 @@ def wait_gpu_release(timeout=30.0):
         prev = cur
 
 
+def ollama_gpu_info():
+    """Ollama 当前能看到哪些卡（服务级 CUDA_VISIBLE_DEVICES 决定，API 无法按模型选卡）。"""
+    vis = ''
+    rc, env, _ = run([SYSTEMCTL, 'show', OLLAMA_UNIT, '-p', 'Environment'])
+    if rc == 0:
+        for tok in env.split():
+            if tok.startswith('CUDA_VISIBLE_DEVICES='):
+                vis = tok.split('=', 1)[1].strip('"')
+                break
+    ids = []
+    if vis and vis != '-1':
+        ids = [x.strip() for x in vis.split(',') if x.strip()]
+    rc2, out, _ = run(['nvidia-smi', '--query-gpu=index,uuid,name', '--format=csv,noheader'])
+    cards = []
+    if rc2 == 0:
+        for line in out.splitlines():
+            parts = [x.strip() for x in line.split(',')]
+            if len(parts) >= 3:
+                cards.append({'index': parts[0], 'uuid': parts[1], 'name': parts[2]})
+    used = []
+    for c in cards:
+        if not ids or c['uuid'] in ids or c['index'] in ids:
+            used.append({'index': c['index'], 'name': c['name']})
+    return {'visible': vis or '（未设置：全部可见）', 'cards': used, 'all': not ids}
+
+
 def gpu_snapshot():
     rc, out, _ = run(['nvidia-smi',
         '--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu',
@@ -485,7 +511,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not self.caller_ok():
                 return self.json_out(403, {'error': '仅允许同源访问'})
             return self.json_out(200, {'gpus': gpu_snapshot(),
-                                       'mem': mem_snapshot(), 'cpu': cpu_snapshot()})
+                                       'mem': mem_snapshot(), 'cpu': cpu_snapshot(),
+                                       'ollama_gpu': ollama_gpu_info()})
         if path == '/__admin/pull/status':
             if not self.caller_ok():
                 return self.json_out(403, {'error': '仅允许同源访问'})
