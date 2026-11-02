@@ -7,3 +7,6 @@ model-params.json
 .DS_Store
 .venv/
 node_modules/
+
+# 导入 GGUF 时的临时 Modelfile
+.import-*.Modelfile
