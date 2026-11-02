@@ -96,7 +96,15 @@
   .a hr { border:none; border-top:1px solid var(--line2); margin:1em 0; }
   .a img { max-width:100%; border-radius:var(--r-sm); }
   .a code { font-family:var(--mono); font-size:.9em; background:var(--layer1); border:1px solid var(--line1); border-radius:var(--r-xs); padding:1px 5px; color:#e8ecf1; }
-  .a pre { background:#101011; border:1px solid var(--line2); border-radius:var(--r-sm); padding:11px 13px; overflow-x:auto; margin:.65em 0; }
+  .cb { border:1px solid var(--line2); border-radius:9px; overflow:hidden; margin:.65em 0; background:#101011; }
+  .cb-h { display:flex; align-items:center; gap:8px; padding:5px 9px; background:var(--layer2);
+          border-bottom:1px solid var(--line2); font-size:11px; color:var(--tx4); font-family:var(--mono); }
+  .cb-lang { margin-right:auto; text-transform:lowercase; opacity:.85; }
+  .cb-btn { border:1px solid var(--line2); background:transparent; color:var(--tx3); border-radius:6px;
+            padding:2px 8px; font-size:11px; cursor:pointer; font-family:var(--mono); }
+  .cb-btn:hover { border-color:var(--line3); color:var(--tx2); background:var(--layer1); }
+  .a pre { background:transparent; border:none; border-radius:0; padding:11px 13px; overflow-x:auto; margin:0; }
+  .cb pre { margin:0; }
   .a pre code { background:none; border:none; padding:0; font-size:13px; line-height:1.6; }
   .a .katex-display { overflow-x:auto; padding:3px 0; }
 
@@ -418,6 +426,15 @@
   <pre class="olog" id="olog">读取中…</pre>
 </div></div>
 
+<!-- HTML 预览 -->
+<div class="mask" id="pv_mask"><div class="modal" style="width:min(92vw,1000px);height:78vh;display:flex;flex-direction:column">
+  <button class="mx" id="pv_close" title="关闭">✕</button>
+  <h3>HTML 预览</h3>
+  <div class="sub">代码在 <b>沙箱 iframe</b> 中运行（无同源权限，拿不到本页数据）</div>
+  <iframe id="pv_frame" sandbox="allow-scripts allow-forms allow-modals allow-popups"
+          style="flex:1;width:100%;border:1px solid var(--line2);border-radius:8px;background:#fff"></iframe>
+</div></div>
+
 <!-- 模型启动参数编辑器 -->
 <div class="mask" id="pmask"><div class="modal" style="width:640px">
   <button class="mx" id="pm_close" title="关闭">✕</button>
@@ -500,8 +517,62 @@ const MATH_DELIMS = [
   { left: '$', right: '$', display: false },
   { left: '\\(', right: '\\)', display: false },
 ];
+function looksHtml(codeEl, text) {
+  const cls = ((codeEl && codeEl.className) || '').toLowerCase();
+  if (/(^|\s)language-(html|htm|xhtml|svg)(\s|$)/.test(cls)) return true;
+  return /^\s*(<!doctype html|<html|<body|<!--)/i.test(String(text).slice(0, 200));
+}
+async function copyText(t) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(t); return true; }
+  } catch { /* 落到下面的兜底 */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = t; ta.style.position = 'fixed'; ta.style.top = '-9999px';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy'); ta.remove(); return ok;
+  } catch { return false; }
+}
+function openPreview(html) {
+  const f = $('pv_frame');
+  if (!f) return;
+  f.srcdoc = html;
+  $('pv_mask').classList.add('on');
+}
+function decorateCode(root) {
+  root.querySelectorAll('pre').forEach(pre => {
+    if (pre.parentElement && pre.parentElement.classList.contains('cb')) return;
+    const codeEl = pre.querySelector('code');
+    const text = codeEl ? codeEl.textContent : pre.textContent;
+    const lang = codeEl ? ((codeEl.className.match(/language-([\w+-]+)/) || [])[1] || '') : '';
+    const wrap = document.createElement('div'); wrap.className = 'cb';
+    const head = document.createElement('div'); head.className = 'cb-h';
+    const langEl = document.createElement('span'); langEl.className = 'cb-lang';
+    langEl.textContent = lang || 'code';
+    head.appendChild(langEl);
+    const bc = document.createElement('button');
+    bc.type = 'button'; bc.className = 'cb-btn'; bc.textContent = '复制';
+    bc.onclick = async e => {
+      e.stopPropagation();
+      const ok = await copyText(text);
+      bc.textContent = ok ? '✓ 已复制' : '复制失败';
+      setTimeout(() => { bc.textContent = '复制'; }, 1500);
+    };
+    head.appendChild(bc);
+    if (looksHtml(codeEl, text)) {
+      const bp = document.createElement('button');
+      bp.type = 'button'; bp.className = 'cb-btn'; bp.textContent = '👁 预览';
+      bp.onclick = e => { e.stopPropagation(); openPreview(text); };
+      head.appendChild(bp);
+    }
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(head);
+    wrap.appendChild(pre);
+  });
+}
 function render(el, text, math) {
   el.innerHTML = DOMPurify.sanitize(marked.parse(text));
+  decorateCode(el);
   if (math) renderMathInElement(el, { delimiters: MATH_DELIMS,
     ignoredTags: ['script','noscript','style','textarea','pre','code'], throwOnError: false });
 }
@@ -1984,6 +2055,8 @@ async function clearParams() {
   $('pmask').classList.remove('on');
   flash('已清除'); drawOllama();
 }
+$('pv_close').onclick = () => { $('pv_mask').classList.remove('on'); $('pv_frame').srcdoc = ''; };
+$('pv_mask').onclick = e => { if (e.target.id === 'pv_mask') { $('pv_mask').classList.remove('on'); $('pv_frame').srcdoc = ''; } };
 $('pm_close').onclick = $('pm_cancel').onclick = () => $('pmask').classList.remove('on');
 $('pm_save').onclick = () => saveParams(false);
 $('pm_saveload').onclick = () => saveParams(true);
