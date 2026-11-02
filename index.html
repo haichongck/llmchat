@@ -306,8 +306,12 @@
     <div class="f"><label>常驻 keep_alive</label><select id="pm_keep">
       <option value="-1">永久常驻（-1）</option>
       <option value="0">立即卸载（0）</option>
-      <option value="300">5 分钟</option>
-      <option value="1800">30 分钟</option>
+      <option value="300">5 分钟（300 秒）</option>
+      <option value="1800">30 分钟（1800 秒）</option>
+      <option value="3600">1 小时（3600 秒）</option>
+      <option value="5m">5 分钟（5m）</option>
+      <option value="30m">30 分钟（30m）</option>
+      <option value="2h">2 小时（2h）</option>
     </select></div>
     <div class="f full"><label>其他高级参数（逗号分隔，如 low_vram=1,use_mmap=0）</label><input id="pm_extra" placeholder="low_vram=1,use_mlock=0,f16_kv=1"></div>
   </div>
@@ -1206,19 +1210,34 @@ async function pullModel() {
 let allParams = {}, pmModel = null;
 const PM_KNOWN = ['num_ctx', 'num_gpu', 'num_batch', 'num_thread', 'temperature',
                   'top_p', 'top_k', 'repeat_penalty', 'num_predict'];
-function openParams(name) {
-  pmModel = name;
-  const p = allParams[name] || {};
-  const o = p.options || {};
+function fillParamsForm(p) {
+  const o = (p && p.options) || {};
   const set = (id, v) => { $(id).value = (v === undefined || v === null) ? '' : v; };
   set('pm_ctx', o.num_ctx); set('pm_gpu', o.num_gpu); set('pm_batch', o.num_batch);
   set('pm_thread', o.num_thread); set('pm_temp', o.temperature); set('pm_topp', o.top_p);
   set('pm_topk', o.top_k); set('pm_rp', o.repeat_penalty); set('pm_np', o.num_predict);
   $('pm_extra').value = Object.keys(o).filter(k => !PM_KNOWN.includes(k))
     .map(k => k + '=' + o[k]).join(',');
-  $('pm_keep').value = String((p.keep_alive === undefined || p.keep_alive === null) ? -1 : p.keep_alive);
+  const keepSel = $('pm_keep');
+  keepSel.querySelectorAll('option[data-temp]').forEach(el => el.remove());   // 清掉上次的临时项
+  const savedKeep = (p && p.keep_alive !== undefined && p.keep_alive !== null) ? p.keep_alive : -1;
+  keepSel.value = String(savedKeep);
+  if (keepSel.value !== String(savedKeep)) {          // 自定义时长（如 10m）不在下拉里时补一个临时项
+    const opt = document.createElement('option');
+    opt.value = String(savedKeep); opt.textContent = String(savedKeep); opt.dataset.temp = '1';
+    keepSel.appendChild(opt); keepSel.value = String(savedKeep);
+  }
+}
+function openParams(name) {
+  pmModel = name;
   $('pm_title').textContent = '启动参数 · ' + name;
+  fillParamsForm(allParams[name] || {});
   $('pmask').classList.add('on');
+  // 再从服务端拉一次最新值，避免用到过期缓存
+  admGet('/__admin/params').then(all => {
+    allParams = all || {};
+    if (pmModel === name && $('pmask').classList.contains('on')) fillParamsForm(allParams[name] || {});
+  }).catch(() => {});
 }
 function collectParams() {
   const o = {};
@@ -1239,7 +1258,8 @@ function collectParams() {
     else if (v !== '' && !isNaN(parseFloat(v))) o[k] = parseFloat(v);
     else if (v !== '') o[k] = v;
   });
-  return { options: o, keep_alive: $('pm_keep').value };
+  const ka = $('pm_keep').value;
+  return { options: o, keep_alive: /^-?\d+$/.test(ka) ? Number(ka) : ka };
 }
 async function saveParams(thenLoad) {
   if (!pmModel) return;

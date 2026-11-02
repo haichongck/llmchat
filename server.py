@@ -17,6 +17,7 @@ NetworkError；页面直连失败时自动把请求发给 /__proxy，由本服�
 import http.server
 import json
 import os
+import re
 import secrets
 import socketserver
 import subprocess
@@ -49,6 +50,23 @@ OPT_FLOAT = {'temperature', 'top_p', 'min_p', 'repeat_penalty', 'typical_p',
              'presence_penalty', 'frequency_penalty', 'tfs_z'}
 OPT_BOOL = {'use_mmap', 'use_mlock', 'low_vram', 'f16_kv', 'numa'}
 
+
+
+def norm_keep(v, default=-1):
+    """Ollama 的 keep_alive：纯数字必须是 JSON 数字（秒），带单位的则用 "5m"/"30s" 这类字符串。
+    历史上前端会把 300 当字符串发过来，Go 的 time.ParseDuration 会报 missing unit，这里统一归一化。"""
+    if v is None or v == '':
+        return default
+    if isinstance(v, bool):
+        return default
+    if isinstance(v, (int, float)):
+        return v
+    t = str(v).strip()
+    if re.fullmatch(r'-?\d+', t):
+        return int(t)
+    if re.fullmatch(r'-?\d+\.\d+', t):
+        return float(t)
+    return t          # 形如 5m / 30s / 2h，直接交给 Ollama
 
 def read_params():
     try:
@@ -237,7 +255,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 entry = {'options': clean_options(data.get('options'))}
                 ka = data.get('keep_alive')
                 if ka not in (None, ''):
-                    entry['keep_alive'] = ka
+                    entry['keep_alive'] = norm_keep(ka)
                 allp = read_params()
                 allp[name] = entry
                 write_params(allp)
@@ -252,7 +270,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     opts.update(clean_options(data['options']))
                 keep = 0
                 if act == 'load':
-                    keep = data.get('keep_alive', saved.get('keep_alive', -1))
+                    keep = norm_keep(data.get('keep_alive', saved.get('keep_alive', -1)))
                 payload = {'model': name, 'prompt': '', 'keep_alive': keep, 'stream': False}
                 if opts:
                     payload['options'] = opts
