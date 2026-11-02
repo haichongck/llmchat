@@ -1,0 +1,17 @@
+# 用法：docker compose up -d
+# 说明：用 host 网络，容器内的 127.0.0.1 即宿主机回环，可直接连本机 Ollama（默认只监听回环）。
+#      容器内不使用 systemd，因此关闭服务启停（模型管理/参数/显存/日志仍可用）。
+services:
+  llmchat:
+    build: .
+    image: llmchat:local
+    container_name: llmchat
+    network_mode: host
+    environment:
+      LLMCHAT_HOST: 127.0.0.1
+      LLMCHAT_PORT: "17101"
+      OLLAMA_BASE_URL: http://127.0.0.1:11434
+      LLMCHAT_SERVICE_CONTROL: "0"
+    volumes:
+      - ./model-params.json:/app/model-params.json
+    restart: unless-stopped

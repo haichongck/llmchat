@@ -24,17 +24,4 @@ jobs:
           node --check /tmp/inline.js && echo "inline JS OK"
 
       - name: 冒烟测试（起服务 + 打接口）
-        run: |
-          LLMCHAT_PORT=17101 LLMCHAT_ADMIN=0 LLMCHAT_PROXY_ALLOW=127.0.0.1 \
-            python3 server.py > /tmp/srv.log 2>&1 &
-          for i in $(seq 1 20); do
-            curl -fsS http://127.0.0.1:17101/ >/dev/null 2>&1 && break
-            sleep 0.5
-          done
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17101/)" = "200"
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17101/vendor/marked.min.js)" = "200"
-          # 管理面板关闭时应 404
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17101/__admin/state)" = "404"
-          # 反代白名单应拦截外站
-          grep -q '白名单' <<<"$(curl -s -X POST http://127.0.0.1:17101/__proxy -H 'Content-Type: application/json' -d '{"url":"https://example.com/","method":"GET"}')"
-          cat /tmp/srv.log
+        run: bash scripts/smoke.sh 17101

@@ -3,6 +3,8 @@
 ![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 ![platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-lightgrey)
 
+[English](README.en.md) · **中文**
+
 # llmchat · 轻量本地 LLM 聊天 + Ollama 管理面板
 
 **一个单文件前端 + 一个单文件后端（零第三方 Python 依赖），把「聊天」和「Ollama 运维」放进同一个页面。**
@@ -59,6 +61,17 @@ python3 server.py          # 默认 http://127.0.0.1:17001
 ```
 
 打开浏览器访问 <http://127.0.0.1:17001> 即可。服务默认只监听本机回环地址。
+
+### Docker 部署
+
+```bash
+docker build -t llmchat .
+docker run -d --name llmchat --network host \
+  -e LLMCHAT_PORT=17101 -e LLMCHAT_SERVICE_CONTROL=0 llmchat
+```
+
+或用 `docker compose up -d`。用 host 网络是因为 Ollama 默认只监听回环地址；容器内没有 systemd，
+所以服务启停自动关闭（模型管理、启动参数、显存、日志照常可用）。
 
 ## 配置（环境变量）
 
@@ -125,6 +138,8 @@ llmchat/
 ├── index.html        单文件前端（UI + 全部逻辑，~64 KB）
 ├── server.py         静态服务 + /__proxy 反代 + /__admin 管理 API（~15 KB，纯标准库）
 ├── vendor/           marked / DOMPurify / KaTeX（离线可用）
+├── scripts/smoke.sh  冒烟测试（CI 与本地共用）
+├── Dockerfile        零依赖容器镜像"
 ├── model-params.json 运行时生成：每模型启动参数
 └── docs/screenshots/
 ```

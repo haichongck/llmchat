@@ -1,0 +1,9 @@
+.git
+.gitignore
+.github
+__pycache__
+*.pyc
+*.bak-*
+model-params.json
+*.log
+docs
