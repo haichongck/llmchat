@@ -114,7 +114,7 @@
   .sysmsg b { color:var(--tx2); font-weight:600; }
 
   /* ---------- 输入区 ---------- */
-  footer { padding:0 20px 18px; }
+  footer { padding:0 20px 14px; }
   .fin { max-width:780px; margin:0 auto; display:flex; gap:10px; align-items:flex-end; background:var(--layer1); border:1px solid var(--line2); border-radius:var(--r-lg); padding:9px 9px 9px 14px; transition:border-color .15s,box-shadow .15s; }
   .fin:focus-within { border-color:rgba(59,130,246,.55); box-shadow:0 0 0 3px rgba(59,130,246,.12); }
   /* ---------- 图片附件 ---------- */
@@ -138,7 +138,7 @@
   .chipbtn:hover { border-color:var(--line3); color:var(--tx2); }
   .modelchip { max-width:240px; overflow:hidden; text-overflow:ellipsis; }
   .metarow { display:flex; gap:14px; align-items:center; justify-content:space-between;
-             margin:6px 4px 0; font-size:11.5px; color:var(--tx4); font-family:var(--mono); min-height:16px; }
+             margin:5px 6px 0; font-size:11.5px; line-height:1.5; color:var(--tx4); font-family:var(--mono); min-height:16px; }
   .pop { display:none; position:fixed; z-index:12; min-width:250px; max-width:340px; max-height:56vh; overflow:auto;
          background:var(--layer1); border:1px solid var(--line2); border-radius:var(--r-md); padding:6px;
          box-shadow:0 16px 40px rgba(0,0,0,.55); }
@@ -253,7 +253,7 @@
         <div class="fin">
           <button class="btn iconbtn" id="btnattach" title="上传图片（也可直接拖入或粘贴）">＋</button>
           <button class="chipbtn" id="btnthink" title="推理强度：关 / 低 / 中 / 高">推理：中</button>
-          <textarea id="in" rows="1" placeholder="发消息…（Enter 发送 / Shift+Enter 换行，可粘贴或拖入图片）"></textarea>
+          <textarea id="in" rows="1" placeholder="发消息…（Enter 发送，可粘贴/拖入图片）"></textarea>
           <button class="chipbtn modelchip" id="btnmodel" title="切换模型">模型 ▾</button>
           <button class="btn primary iconbtn" id="btnsend" title="发送">↑</button>
           <button class="btn" id="btnstop" style="display:none">停止</button>
