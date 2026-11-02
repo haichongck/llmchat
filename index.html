@@ -1674,9 +1674,9 @@ async function scanGguf(dir) {
     html += '<div class="ggufrow" style="flex-wrap:wrap;gap:6px">' +
       j.dirs.slice(0, 12).map(n => `<span class="dir" data-dir="${esc(n)}" style="cursor:pointer;text-decoration:underline dotted">${esc(n)}/</span>`).join(' ') + '</div>';
   }
-  if (!ggufFiles.length) html += '<div class="ggufrow">该目录下没有 .gguf 文件</div>';
+  if (!ggufFiles.length) html += '<div class="ggufrow">该目录（含子目录）下没有 .gguf 文件</div>';
   html += ggufFiles.map((f, i) =>
-    `<div class="ggufrow" data-i="${i}">${esc(f.name)}<span class="sz">${(f.size / 1073741824).toFixed(2)} GB</span></div>`).join('');
+    `<div class="ggufrow" data-i="${i}">${esc(f.rel || f.name)}<span class="sz">${(f.size / 1073741824).toFixed(2)} GB</span></div>`).join('');
   list.innerHTML = html;
   list.querySelectorAll('[data-dir]').forEach(el => el.onclick = () => scanGguf(ggufDirNow.replace(/\/+$/, '') + '/' + el.dataset.dir));
   list.querySelectorAll('[data-i]').forEach(el => el.onclick = () => {
@@ -1733,80 +1733,78 @@ async function importGguf() {
   else prog.textContent = '已结束，但没收到成功标记';
 }
 
+let pullTimer = null;
+
+function renderPull(snap) {
+  const prog = $('opullprog'), bar = $('opullbar'), stats = $('opullstats'), log = $('opullog');
+  if (!prog) return;
+  if (!snap || (!snap.active && !snap.finished)) { prog.style.display = 'none'; return; }
+  prog.style.display = 'block';
+  const mb = n => (n / 1048576).toFixed(1);
+  const pct = snap.percent || 0;
+  bar.style.width = pct + '%';
+  bar.style.background = snap.error ? '#ef4444' : '';
+  if (snap.error) {
+    stats.innerHTML = '<span style="color:#ef4444">✗ 拉取失败：' + esc(snap.error) + '</span>';
+    if (log) log.textContent = '拉取失败：' + snap.error;
+  } else if (snap.ok) {
+    stats.textContent = '✓ 拉取完成：' + snap.name + ' · ' + mb(snap.total) + ' MB';
+    if (log) log.textContent = '拉取完成：' + snap.name;
+  } else if (snap.active) {
+    stats.textContent = (snap.status === 'success' ? '收尾中' : (snap.status || '下载中'))
+      + ' · ' + pct + '% · ' + mb(snap.completed) + '/' + mb(snap.total) + ' MB · ' + (snap.layers || 0) + ' 个分片';
+  } else {
+    stats.textContent = '已结束（未收到 success）：' + (snap.status || '未知');
+  }
+}
+
+function pollPull() {
+  if (pullTimer) return;
+  pullTimer = setInterval(async () => {
+    let snap = null;
+    try { snap = await (await fetch('/__admin/pull/status')).json(); } catch {}
+    renderPull(snap);
+    if (!snap || !snap.active) {
+      clearInterval(pullTimer); pullTimer = null;
+      if (snap && snap.ok) drawOllama();
+    }
+  }, 1000);
+}
+
 async function pullModel() {
   const name = $('opullname').value.trim();
   if (!name) return;
   const t = await admToken();
-  const log = $('opullog'), prog = $('opullprog'), bar = $('opullbar'), stats = $('opullstats');
+  const prog = $('opullprog'), bar = $('opullbar'), stats = $('opullstats'), log = $('opullog');
+  prog.style.display = 'block'; bar.style.width = '0%'; stats.textContent = '提交中…';
   log.style.display = 'block'; log.textContent = '开始拉取 ' + name;
-  prog.style.display = 'block'; bar.style.width = '0%'; stats.textContent = '解析清单…';
   $('opullbtn').disabled = true;
-
-  const layers = {};                 // digest → { total, completed }
-  let errMsg = '', ok = false, statusText = '', lastRender = 0;
-  const renderProg = () => {
-    const tot = Object.values(layers).reduce((a, l) => a + (l.total || 0), 0);
-    const done = Object.values(layers).reduce((a, l) => a + (l.completed || 0), 0);
-    const pct = tot ? Math.min(100, Math.round(done / tot * 100)) : 0;
-    bar.style.width = pct + '%';
-    const mb = n => (n / 1048576).toFixed(1);
-    stats.textContent = tot
-      ? `${statusText || '下载中'} · ${pct}% · ${mb(done)}/${mb(tot)} MB · ${Object.keys(layers).length} 个分片`
-      : (statusText || '准备中…');
-  };
-
+  let res = {};
   try {
     const r = await fetch('/__admin/pull', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': t },
       body: JSON.stringify({ name: name }),
     });
-    if (!r.ok) {
-      const txt = await r.text();
-      errMsg = 'HTTP ' + r.status + ' ' + txt.slice(0, 200);
-    } else {
-      const rd = r.body.getReader(), dec = new TextDecoder();
-      let buf = '';
-      for (;;) {
-        const { done, value } = await rd.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split('\n'); buf = lines.pop();
-        for (const ln of lines) {
-          if (!ln.trim()) continue;
-          let j; try { j = JSON.parse(ln); } catch { continue; }
-          if (j.error) { errMsg = j.error; continue; }
-          if (j.digest && j.total) {
-            layers[j.digest] = { total: j.total, completed: j.completed || 0 };
-          }
-          if (j.status) {
-            statusText = j.status === 'success' ? '完成'
-              : (j.status.startsWith('pulling ') ? '下载中' : j.status);
-            if (j.status === 'success') ok = true;
-          }
-          const now = Date.now();
-          if (now - lastRender > 120) { lastRender = now; renderProg(); }
-        }
-      }
-      renderProg();
-    }
-  } catch (e) {
-    errMsg = String(e && (e.message || e));
-  } finally {
-    $('opullbtn').disabled = false;
-  }
-
-  if (errMsg) {
+    res = await r.json();
+  } catch (e) { res = { error: String(e) }; }
+  $('opullbtn').disabled = false;
+  if (res.error) {
     bar.style.width = '100%'; bar.style.background = '#ef4444';
-    stats.innerHTML = '<span style="color:#ef4444">✗ 拉取失败：' + esc(errMsg) + '</span>';
-    log.textContent = '拉取失败：' + errMsg;
-  } else if (ok) {
-    bar.style.width = '100%';
-    stats.textContent = '✓ 拉取完成：' + name;
-    log.textContent = '拉取完成：' + name;
-    drawOllama();
-  } else {
-    stats.textContent = '已结束但未收到 success 事件（' + (statusText || '未知') + '）';
+    stats.innerHTML = '<span style="color:#ef4444">✗ 拉取失败：' + esc(res.error) + '</span>';
+    log.textContent = '拉取失败：' + res.error;
+    return;
+  }
+  stats.textContent = '已提交，后台下载中…';
+  pollPull();
+}
+
+async function attachPullIfRunning() {
+  let snap = null;
+  try { snap = await (await fetch('/__admin/pull/status')).json(); } catch { return; }
+  if (snap && (snap.active || (snap.finished && Date.now() / 1000 - snap.finished < 120))) {
+    renderPull(snap);
+    if (snap.active) pollPull();
   }
 }
 
@@ -1907,6 +1905,7 @@ $('btnollama').onclick = () => {
   if (panelTimer) clearInterval(panelTimer);
   panelTimer = setInterval(() => { if ($('omask').classList.contains('on')) drawOllama(true); }, 8000);
   if (!$('ggufdir').value) { $('ggufdir').value = '~/models'; scanGguf('~/models'); }
+  attachPullIfRunning();
 };
 $('om_close').onclick = () => { if (panelTimer) { clearInterval(panelTimer); panelTimer = null; } $('omask').classList.remove('on'); };
 $('opullbtn').onclick = pullModel;

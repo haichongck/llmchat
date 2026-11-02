@@ -22,6 +22,7 @@ import secrets
 import socketserver
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -41,6 +42,10 @@ SERVICE_CONTROL = os.environ.get('LLMCHAT_SERVICE_CONTROL', '1') != '0'
 PROXY_ALLOW = [h.strip().lower() for h in
                os.environ.get('LLMCHAT_PROXY_ALLOW', '127.0.0.1,localhost,::1').split(',') if h.strip()]
 TOKEN = secrets.token_hex(24)
+# 后台拉取任务状态：把下载从浏览器请求上解耦，刷新/关页面也不影响
+PULL = {'active': False, 'name': '', 'status': '', 'error': '', 'ok': False,
+        'started': 0.0, 'finished': 0.0, 'layers': {}}
+PULL_LOCK = threading.Lock()
 # 允许浏览/导入 gguf 的根目录（可用 LLMCHAT_IMPORT_ROOTS 覆盖，逗号分隔）
 IMPORT_ROOTS = [os.path.realpath(os.path.expanduser(p))
                 for p in (os.environ.get('LLMCHAT_IMPORT_ROOTS') or '~,/mnt,/media,/srv,/opt').split(',')
@@ -159,28 +164,40 @@ def path_allowed(p):
     return None
 
 
-def gguf_scan(dirpath):
+def gguf_scan(dirpath, depth=3):
     ap = path_allowed(dirpath)
     if not ap:
         return {'error': '目录不在允许范围内（LLMCHAT_IMPORT_ROOTS）'}
     if not os.path.isdir(ap):
         return {'error': '目录不存在'}
     dirs, files = [], []
-    try:
-        for e in sorted(os.scandir(ap), key=lambda x: x.name.lower()):
+    root_len = len(ap.rstrip('/')) + 1
+
+    def walk(cur, level):
+        if level > depth:
+            return
+        try:
+            entries = sorted(os.scandir(cur), key=lambda x: x.name.lower())
+        except Exception:  # noqa: BLE001
+            return
+        for e in entries:
             if e.name.startswith('.'):
                 continue
             try:
                 if e.is_dir():
-                    dirs.append(e.name)
+                    if level == 1:
+                        dirs.append(e.name)
+                    walk(e.path, level + 1)
                 elif e.is_file() and e.name.lower().endswith('.gguf'):
                     st = e.stat()
-                    files.append({'name': e.name, 'path': e.path, 'size': st.st_size})
+                    files.append({'name': e.name, 'rel': e.path[root_len:],
+                                  'path': e.path, 'size': st.st_size})
             except OSError:
                 continue
-    except Exception as e:  # noqa: BLE001
-        return {'error': str(e)}
-    return {'dir': ap, 'dirs': dirs[:200], 'files': files[:200]}
+
+    walk(ap, 1)
+    files.sort(key=lambda f: f['rel'].lower())
+    return {'dir': ap, 'depth': depth, 'dirs': dirs[:200], 'files': files[:300]}
 
 
 def models_info():
@@ -201,6 +218,53 @@ def models_info():
             d = os.path.expanduser('~/.ollama/models')
     free, total = dir_free(d)
     return {'dir': d, 'free': free, 'total': total, 'custom': custom}
+
+
+def pull_snapshot():
+    with PULL_LOCK:
+        layers = dict(PULL['layers'])
+        total = sum(l.get('total', 0) for l in layers.values())
+        done = sum(l.get('completed', 0) for l in layers.values())
+        active = PULL['active']
+        return {'active': active, 'name': PULL['name'], 'status': PULL['status'],
+                'error': PULL['error'], 'ok': PULL['ok'], 'started': PULL['started'],
+                'finished': PULL['finished'], 'total': total, 'completed': done,
+                'percent': round(done / total * 100, 1) if total else 0,
+                'layers': len(layers)}
+
+
+def pull_worker(name):
+    """在后台消费 Ollama 的 /api/pull 事件流；与浏览器连接无关。"""
+    try:
+        rq = urllib.request.Request(OLLAMA + '/api/pull',
+                                    data=json.dumps({'model': name, 'stream': True}).encode(),
+                                    headers={'Content-Type': 'application/json'}, method='POST')
+        with urllib.request.urlopen(rq, timeout=7200) as resp:
+            for raw in resp:
+                line = raw.decode('utf-8', 'replace').strip()
+                if not line:
+                    continue
+                try:
+                    j = json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+                with PULL_LOCK:
+                    if j.get('error'):
+                        PULL['error'] = j['error']
+                    if j.get('digest'):
+                        PULL['layers'][j['digest']] = {'total': j.get('total', 0),
+                                                       'completed': j.get('completed', 0)}
+                    if j.get('status'):
+                        PULL['status'] = j['status']
+                        if j['status'] == 'success':
+                            PULL['ok'] = True
+    except Exception as e:  # noqa: BLE001
+        with PULL_LOCK:
+            PULL['error'] = str(e)
+    finally:
+        with PULL_LOCK:
+            PULL['active'] = False
+            PULL['finished'] = time.time()
 
 
 def gpu_snapshot():
@@ -355,6 +419,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.json_out(403, {'error': '仅允许同源访问'})
             return self.json_out(200, {'gpus': gpu_snapshot(),
                                        'mem': mem_snapshot(), 'cpu': cpu_snapshot()})
+        if path == '/__admin/pull/status':
+            if not self.caller_ok():
+                return self.json_out(403, {'error': '仅允许同源访问'})
+            return self.json_out(200, pull_snapshot())
         if path == '/__admin/gguf':
             if not self.caller_ok():
                 return self.json_out(403, {'error': '仅允许同源访问'})
@@ -550,28 +618,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def admin_pull(self, name):
         if not name:
             return self.json_out(400, {'error': '缺少 name'})
-        payload = json.dumps({'model': name, 'stream': True}).encode()
-        rq = urllib.request.Request(OLLAMA + '/api/pull', data=payload,
-                                    headers={'Content-Type': 'application/json'}, method='POST')
-        self.admin = True
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/x-ndjson; charset=utf-8')
-        self.send_header('Cache-Control', 'no-store')
-        self.end_headers()
-        try:
-            with urllib.request.urlopen(rq, timeout=3600) as resp:
-                while True:
-                    chunk = resp.read(4096)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
-        except Exception as e:  # noqa: BLE001
-            try:
-                self.wfile.write((json.dumps({'error': str(e)}) + '\n').encode())
-                self.wfile.flush()
-            except Exception:  # noqa: BLE001
-                pass
+        snap = pull_snapshot()
+        if snap['active']:
+            return self.json_out(409, {'error': '已有拉取任务在进行：' + snap['name'], 'pull': snap})
+        with PULL_LOCK:
+            PULL.update({'active': True, 'name': name, 'status': 'starting', 'error': '',
+                         'ok': False, 'started': time.time(), 'finished': 0, 'layers': {}})
+        threading.Thread(target=pull_worker, args=(name,), daemon=True).start()
+        return self.json_out(200, {'ok': True, 'started': name})
 
     # ---------- 反代（原逻辑） ----------
     def proxy(self):
