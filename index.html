@@ -115,12 +115,14 @@
 
   /* ---------- 输入区 ---------- */
   footer { padding:0 20px 20px; }
-  .fin { max-width:820px; margin:0 auto; display:flex; gap:10px; align-items:flex-end;
-         background:var(--layer1); border:1px solid var(--line2); border-radius:26px;
-         padding:14px 14px 14px 18px; transition:border-color .15s,box-shadow .15s; }
+  .fin { max-width:820px; margin:0 auto; display:flex; flex-direction:column; gap:8px;
+         background:var(--layer1); border:1px solid var(--line2); border-radius:22px;
+         padding:12px 12px 10px 16px; transition:border-color .15s,box-shadow .15s; }
+  .finbar { display:flex; align-items:center; gap:8px; }
+  .fingrow { flex:1; }
   .fin:focus-within { border-color:rgba(59,130,246,.5); box-shadow:0 0 0 4px rgba(59,130,246,.10); }
   .finwrap { max-width:820px; margin:0 auto; }
-  #in { min-height:56px; padding:14px 0; font-size:15.5px; }
+  #in { width:100%; box-sizing:border-box; min-height:26px; max-height:180px; padding:6px 2px 2px; font-size:15.5px; }
   #btnsend { width:44px; height:44px; padding:0; border-radius:50%; font-size:18px; display:grid; place-items:center; }
   .chipbtn { padding:8px 14px; font-size:12.5px; }
   /* DSH 风格菜单 */
@@ -295,12 +297,15 @@
         <div class="genline" id="genline"></div>
         <div id="attach" class="attach"></div>
         <div class="fin">
-          <button class="btn iconbtn" id="btnattach" title="上传图片（也可直接拖入或粘贴）">＋</button>
-          <button class="chipbtn" id="btnthinkq" title="快速切换：思考 / 不思考">思考：开</button>
           <textarea id="in" rows="1" placeholder="发消息…（Enter 发送，可粘贴/拖入图片）"></textarea>
-          <button class="chipbtn modelchip" id="btnmodel" title="模型 / 推理等级">模型 ▾</button>
-          <button class="btn primary iconbtn" id="btnsend" title="发送">↑</button>
-          <button class="btn" id="btnstop" style="display:none">停止</button>
+          <div class="finbar">
+            <button class="btn iconbtn" id="btnattach" title="上传图片（也可直接拖入或粘贴）">＋</button>
+            <button class="chipbtn" id="btnthinkq" title="快速切换：思考 / 不思考">思考：开</button>
+            <span class="fingrow"></span>
+            <button class="chipbtn modelchip" id="btnmodel" title="模型 / 推理等级">模型 ▾</button>
+            <button class="btn primary iconbtn" id="btnsend" title="发送">↑</button>
+            <button class="btn" id="btnstop" style="display:none">停止</button>
+          </div>
         </div>
         <div class="metarow">
           <span id="mstat" class="meta"></span>
@@ -945,19 +950,12 @@ function renderMenu() {
       h += `<div class="mrow" data-nav="effort"><span>推理等级</span><span class="mv">${esc(reasonInfo().name)}</span><span class="chev">›</span></div>`;
     }
     pop.innerHTML = h;
-    pop.querySelectorAll('[data-nav]').forEach(el => el.onclick = () => { menuView = el.dataset.nav; menuQuery = ''; renderMenu(); });
     return;
   }
 
   if (menuView === 'effort') {
     pop.innerHTML = '<div class="mback" data-back="1">‹ 返回</div>' +
       REASON_LEVELS.map(r => modelRow('r:' + r.key, r.name, r.tag, r.key === reasonLevel)).join('');
-    pop.querySelector('[data-back]').onclick = () => { menuView = 'root'; renderMenu(); };
-    pop.querySelectorAll('[data-v]').forEach(el => el.onclick = () => {
-      reasonLevel = el.dataset.v.slice(2);
-      localStorage.setItem('llmchat2:reason', reasonLevel);
-      applyReason(); closeMenu();
-    });
     return;
   }
 
@@ -988,20 +986,11 @@ function renderMenu() {
   h += body ? '<div class="mlist">' + body + '</div>' : '<div class="mempty">暂无可用模型</div>';
   h += '<div class="mrow" data-add="1">＋ 添加自定义模型…</div>';
   pop.innerHTML = h;
-  pop.querySelector('[data-back]').onclick = () => { menuView = 'root'; renderMenu(); };
   const si = pop.querySelector('#msearch');
   if (si) {
     si.oninput = () => { menuQuery = si.value; const pos = si.selectionStart; renderMenu(); const s2 = $('msearch'); if (s2) { s2.focus(); s2.setSelectionRange(pos, pos); } };
     si.focus();
   }
-  pop.querySelectorAll('[data-v]').forEach(el => el.onclick = () => {
-    ensureModelOption(el.dataset.v);
-    $('model').value = el.dataset.v;
-    if ($('model').onchange) $('model').onchange();
-    closeMenu();
-  });
-  const add = pop.querySelector('[data-add]');
-  if (add) add.onclick = () => { closeMenu(); cancelEdit(); drawCM(); $('mask').classList.add('on'); };
   customModels.forEach(pv => {
     const c = providerModels[pv.name];
     if (c && Date.now() - c.ts < 60000) return;
@@ -1015,7 +1004,34 @@ function openPop(pop, btn) {
   pop.style.left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)) + 'px';
   pop.style.bottom = (window.innerHeight - r.top + 10) + 'px';
 }
-function openMenu() { renderMenu(); openPop($('popmenu'), $('btnmodel')); }
+function bindMenuOnce() {
+  const pop = $('popmenu');
+  if (!pop || pop.dataset.bound) return;
+  pop.dataset.bound = '1';
+  pop.onclick = e => {
+    e.stopPropagation();                     // 关键：阻止冒泡到「点击外部关闭」
+    const back = e.target.closest('[data-back]');
+    if (back) { menuView = 'root'; renderMenu(); return; }
+    const nav = e.target.closest('[data-nav]');
+    if (nav) { menuView = nav.dataset.nav; menuQuery = ''; renderMenu(); return; }
+    const add = e.target.closest('[data-add]');
+    if (add) { closeMenu(); cancelEdit(); drawCM(); $('mask').classList.add('on'); return; }
+    const row = e.target.closest('[data-v]');
+    if (!row) return;
+    const v = row.dataset.v;
+    if (v.startsWith('r:')) {
+      reasonLevel = v.slice(2);
+      localStorage.setItem('llmchat2:reason', reasonLevel);
+      applyReason(); closeMenu(); return;
+    }
+    ensureModelOption(v);
+    $('model').value = v;
+    if ($('model').onchange) $('model').onchange();
+    closeMenu();
+  };
+  pop.addEventListener('click', e => e.stopPropagation());
+}
+function openMenu() { bindMenuOnce(); renderMenu(); openPop($('popmenu'), $('btnmodel')); }
 function closeMenu() { const p = $('popmenu'); if (p) p.classList.remove('on'); }
 $('btnthinkq').onclick = e => {
   e.stopPropagation();
