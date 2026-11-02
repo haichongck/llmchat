@@ -220,6 +220,27 @@ def models_info():
     return {'dir': d, 'free': free, 'total': total, 'custom': custom}
 
 
+def model_caps(name):
+    try:
+        return ollama_post('/api/show', {'model': name}, timeout=30).get('capabilities') or []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def warmup(name, keep, opts=None, timeout=600):
+    """把模型拉起/卸载。嵌入模型没有 generate 能力，要用 /api/embed 预热。"""
+    caps = model_caps(name)
+    body = {'model': name, 'keep_alive': keep}
+    if opts:
+        body['options'] = opts
+    if 'embedding' in caps and 'completion' not in caps:
+        body['input'] = ['warmup']
+        return ollama_post('/api/embed', body, timeout=timeout)
+    body['prompt'] = ''
+    body['stream'] = False
+    return ollama_post('/api/generate', body, timeout=timeout)
+
+
 def pull_snapshot():
     with PULL_LOCK:
         layers = dict(PULL['layers'])
@@ -500,8 +521,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 name = str(data.get('name') or '').strip()
                 if not name:
                     return self.json_out(400, {'error': '缺少 name'})
+                unloaded = False
+                try:
+                    cur = ollama_get('/api/ps').get('models', [])
+                    if any((m.get('name') or m.get('model') or '') == name for m in cur):
+                        warmup(name, 0, timeout=180)   # Ollama 删清单不踢显存，先卸载
+                        unloaded = True
+                        time.sleep(1)
+                except Exception:  # noqa: BLE001
+                    pass
                 ollama_delete('/api/delete', {'model': name})
-                return self.json_out(200, {'ok': True, 'deleted': name})
+                return self.json_out(200, {'ok': True, 'deleted': name, 'unloaded': unloaded})
             if act == 'params':
                 name = str(data.get('name') or '').strip()
                 if not name:
@@ -530,21 +560,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 keep = 0
                 if act == 'load':
                     keep = norm_keep(data.get('keep_alive', saved.get('keep_alive', -1)))
-                payload = {'model': name, 'prompt': '', 'keep_alive': keep, 'stream': False}
-                if opts:
-                    payload['options'] = opts
                 if act == 'load':
                     # 已加载的模型不会因新参数自动重载，先卸载再拉起
                     try:
                         cur = ollama_get('/api/ps').get('models', [])
                         if any((m.get('name') or m.get('model') or '') == name for m in cur):
-                            ollama_post('/api/generate',
-                                        {'model': name, 'prompt': '', 'keep_alive': 0,
-                                         'stream': False}, timeout=120)
+                            warmup(name, 0, timeout=180)
                             time.sleep(1.5)
                     except Exception:  # noqa: BLE001
                         pass
-                ollama_post('/api/generate', payload, timeout=600)
+                warmup(name, keep, opts, timeout=600)
                 return self.json_out(200, {'ok': True, 'model': name, 'loaded': act == 'load',
                                            'options': opts, 'keep_alive': keep})
             if act == 'import':
@@ -561,7 +586,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                                      {'ok': rc == 0, 'action': what, 'state': state,
                                       'out': out, 'err': err})
         except urllib.error.HTTPError as e:
-            return self.json_out(e.code, {'error': e.read().decode('utf-8', 'replace')[:400]})
+            raw = e.read().decode('utf-8', 'replace')
+            msg = raw[:400]
+            try:                       # Ollama 回的是 {"error": "..."}，取可读字段
+                j = json.loads(raw)
+                msg = j.get('error') or msg
+            except Exception:  # noqa: BLE001
+                pass
+            return self.json_out(e.code, {'error': msg})
         except Exception as e:  # noqa: BLE001
             return self.json_out(500, {'error': str(e)})
         return self.json_out(404, {'error': 'unknown'})

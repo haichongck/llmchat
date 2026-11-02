@@ -1648,8 +1648,11 @@ async function modelAction(act, name) {
     clearInterval(timer);
   }
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
-  if (r && r.error) { showInline(`<span class="err">✗ ${label}失败：${esc(r.error)}（${secs}s）</span>`);
-    flash('失败：' + r.error, 6000); }
+  if (r && r.error) {
+    let emsg = String(r.error);
+    try { if (/^\s*\{/.test(emsg)) emsg = JSON.parse(emsg).error || emsg; } catch { /* 原文 */ }
+    showInline(`<span class="err">✗ ${label}失败：${esc(emsg)}（${secs}s）</span>`);
+    flash('失败：' + emsg, 6000); }
   else { showInline(`<span class="ok">✓ ${label}完成：${esc(name)}（${secs}s）</span>`);
     flash(label + '完成', 3000); }
   invalidateParams(); drawOllama(); drawModelChips(); drawGpuPanel();
