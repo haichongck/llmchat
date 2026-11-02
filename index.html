@@ -372,6 +372,7 @@
   <div id="oloaded"></div>
   <div class="osec">模型库</div>
   <div id="olib"></div>
+  <div id="oorphans"></div>
   <div class="osec">拉取新模型</div>
   <div class="opull"><input id="opullname" placeholder="如 qwen3:8b / llama3.2:3b"><button class="btn primary" id="opullbtn">拉取</button></div>
   <pre class="olog" id="opullog" style="display:none;margin-top:8px"></pre>
@@ -1565,6 +1566,23 @@ async function drawOllama(silent) {
   $('olib').querySelectorAll('[data-del]').forEach(b => b.onclick = () => modelAction('delete', b.dataset.del));
   $('olib').querySelectorAll('[data-params]').forEach(b => b.onclick = () => openParams(b.dataset.params));
   allParams = pm;
+
+  // 已删除的模型仍残留启动参数 → 提示可一键清理
+  const libNames = new Set(lib.map(m => m.name));
+  const orphans = Object.keys(pm).filter(k => !libNames.has(k));
+  const ob = $('oorphans');
+  if (ob) {
+    if (orphans.length) {
+      ob.innerHTML = `<div class="oitem"><span class="nm">${orphans.length} 个已删除的模型仍保留启动参数</span>
+        <button class="btn" id="ocleanparams" title="${esc(orphans.join(', '))}">清理参数</button></div>`;
+      $('ocleanparams').onclick = async () => {
+        showInline('<span class="wait">正在清理失效参数…</span>');
+        for (const nm of orphans) { try { await admPost('params', { name: nm, remove: true }); } catch {} }
+        invalidateParams(); showInline('<span class="ok">✓ 已清理 ' + orphans.length + ' 条失效参数</span>');
+        drawOllama();
+      };
+    } else ob.innerHTML = '';
+  }
 
 
   let lines = d.logs || [];
