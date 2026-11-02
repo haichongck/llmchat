@@ -237,6 +237,10 @@
   <button class="mx" id="cm_close" title="关闭">✕</button>
   <h3>自定义模型</h3>
   <div class="sub">内容对齐 DSH 的模型配置：Base URL + 模型 ID + 上下文窗口 / 最大输出，可带 API Key。支持 OpenAI 兼容（LM Studio / fastllm / Strata / 云端 API）与 Ollama；直连被 CORS 拦截时自动走本机代理。</div>
+    <label class="lbl" style="display:flex;align-items:center;gap:6px;margin-bottom:10px;color:var(--tx3)"
+           title="关闭后下拉里只出现你手动添加的模型，不再自动列出本机 Ollama 的模型">
+      <input id="cm_auto" type="checkbox" checked>自动列出本机 Ollama 模型（关闭后只能手动添加）
+    </label>
   <div id="cmlist"></div>
   <div class="form">
     <div class="editbar" id="editbar">编辑中 <b id="editname"></b><span style="color:var(--tx4)">保存后立即生效</span></div>
@@ -347,6 +351,7 @@ function render(el, text, math) {
 
 /* ---------- 模型 ---------- */
 let chatModels = [];   // 仅保留可用于对话的 Ollama 模型（排除纯 embedding）
+let autoOllama = true; // 是否在下拉里自动列出本机 Ollama 模型（可在「自定义模型」里关闭）
 async function modelCaps(name) {
   try {
     const r = await fetch(OLLAMA + '/api/show', { method: 'POST', body: JSON.stringify({ name }) });
@@ -364,7 +369,7 @@ async function classifyOllamaModels() {
 
 function modelOptions() {
   const hint = m => /vision|(^|[^a-z])vl([^a-z]|$)/i.test(m.name) ? ' · 可看图' : '';
-  const built = chatModels.map(m => `<option value="ollama:${m.name}">${m.name}（本机 ${(m.size/1e9).toFixed(1)}G${hint(m)}）</option>`);
+  const built = (autoOllama ? chatModels : []).map(m => `<option value="ollama:${m.name}">${m.name}（本机 ${(m.size/1e9).toFixed(1)}G${hint(m)}）</option>`);
   const cust = customModels.map(m => `<option value="custom:${m.name}">${m.name}（自定义）</option>`);
   const addOpt = '<option value="__addmodel__">＋ 添加自定义模型…</option>';
   $('model').innerHTML = built.join('')
@@ -885,6 +890,18 @@ $('cm_cleanup').onclick = async () => {
   customModels = customModels.filter(m => !bad.includes(m.name));
   save(); modelOptions(); drawCM(); drawChat();
 };
+$('cm_auto').onchange = () => {
+  autoOllama = $('cm_auto').checked;
+  localStorage.setItem('llmchat2:autoollama', autoOllama ? '1' : '0');
+  modelOptions();
+  const s = act();
+  const vals = Array.from($('model').options).map(o => o.value).filter(v => v !== '__addmodel__');
+  if (s && !vals.includes(s.model)) {
+    s.model = vals[0] || '';
+    if (!s.model) flash('当前没有可用模型：请先添加自定义模型', 5000);
+  }
+  save(); drawChat();
+};
 $('btnmodels').onclick = () => { cancelEdit(); drawCM(); $('mask').classList.add('on'); };
 $('cm_close').onclick = closeModal;
 $('cm_cancel').onclick = () => {
@@ -959,6 +976,8 @@ async function init() {
   $('maxtok').value = load(LS.maxtok, 4096);
   if ($('nothink')) $('nothink').checked = load(LS.nothink, '1') !== '0';
   customModels = load(LS.models, []);
+  autoOllama = load('llmchat2:autoollama', 1) !== 0;   // load() 走 JSON.parse，读回来是数字
+  if ($('cm_auto')) $('cm_auto').checked = autoOllama;
   try {   // 服务端配置：Ollama 地址 / 是否启用管理面板
     const cfg = await (await fetch('/__config')).json();
     if (cfg.ollama) OLLAMA = cfg.ollama;
