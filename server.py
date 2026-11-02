@@ -136,6 +136,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Access-Control-Allow-Headers', '*')
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        # 静态页禁止缓存：改完刷新必定拿到最新版，避免"看着像没更新"
+        if self.command in ('GET', 'HEAD') and not self.path.startswith('/__admin'):
+            self.send_header('Cache-Control', 'no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
         super().end_headers()
 
     def do_OPTIONS(self):
