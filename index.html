@@ -1707,8 +1707,14 @@ async function modelAction(act, name) {
     try { if (/^\s*\{/.test(emsg)) emsg = JSON.parse(emsg).error || emsg; } catch { /* 原文 */ }
     showInline(`<span class="err">✗ ${label}失败：${esc(emsg)}（${secs}s）</span>`);
     flash('失败：' + emsg, 6000); }
-  else { showInline(`<span class="ok">✓ ${label}完成：${esc(name)}（${secs}s）</span>`);
-    flash(label + '完成', 3000); }
+  else {
+    const ev = (r && Array.isArray(r.evicted)) ? r.evicted : [];
+    const extra = ev.length
+      ? `<span class="wait"> · Ollama 按显存逐出：${esc(ev.map(x => aliasMap[x] || x).join('、'))}</span>`
+      : '';
+    showInline(`<span class="ok">✓ ${label}完成：${esc(name)}（${secs}s）</span>${extra}`);
+    flash(label + '完成' + (ev.length ? '（有模型被逐出）' : ''), 4000);
+  }
   invalidateParams(); drawOllama(); drawModelChips(); drawGpuPanel();
 }
 function showInline(html) { const el = $('ostat'); if (el) el.innerHTML = html; }

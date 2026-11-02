@@ -564,17 +564,37 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if act == 'load':
                     keep = norm_keep(data.get('keep_alive', saved.get('keep_alive', -1)))
                 if act == 'load':
-                    # 已加载的模型不会因新参数自动重载，先卸载再拉起
+                    # 已加载的模型不会因新参数自动重载，先卸载再拉起。
+                    # 关键：必须等到它真的从 /api/ps 消失（显存已释放），否则 Ollama
+                    # 会以为可用内存不足，把别的模型（比如 embedding）逐出。
                     try:
                         cur = ollama_get('/api/ps').get('models', [])
                         if any((m.get('name') or m.get('model') or '') == name for m in cur):
                             warmup(name, 0, timeout=180)
-                            time.sleep(1.5)
+                            for _ in range(40):          # 最多等 20 秒
+                                ps = ollama_get('/api/ps').get('models', [])
+                                if not any((m.get('name') or m.get('model') or '') == name for m in ps):
+                                    break
+                                time.sleep(0.5)
                     except Exception:  # noqa: BLE001
                         pass
+                before = set()
+                try:
+                    before = {(m.get('name') or m.get('model') or '')
+                              for m in ollama_get('/api/ps').get('models', [])}
+                except Exception:  # noqa: BLE001
+                    pass
                 warmup(name, keep, opts, timeout=600)
+                evicted = []
+                if act == 'load':
+                    try:
+                        after = {(m.get('name') or m.get('model') or '')
+                                 for m in ollama_get('/api/ps').get('models', [])}
+                        evicted = sorted(x for x in (before - after) if x and x != name)
+                    except Exception:  # noqa: BLE001
+                        pass
                 return self.json_out(200, {'ok': True, 'model': name, 'loaded': act == 'load',
-                                           'options': opts, 'keep_alive': keep})
+                                           'options': opts, 'keep_alive': keep, 'evicted': evicted})
             if act == 'import':
                 return self.admin_import(data)
             if act == 'service':
