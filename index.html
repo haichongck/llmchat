@@ -192,6 +192,11 @@
   .opull { display:flex; gap:8px; }
   .opull input { flex:1; background:var(--side); border:1px solid var(--line2); border-radius:var(--r-sm); padding:8px 10px; font-size:13px; color:var(--tx2); outline:none; }
   .olog { max-height:170px; overflow:auto; background:var(--side); border:1px solid var(--line1); border-radius:var(--r-sm); padding:8px 10px; font-family:var(--mono); font-size:11px; color:var(--tx3); white-space:pre-wrap; margin:0; }
+  .ostat { font-size:12px; margin-top:8px; min-height:0; }
+  .ostat:empty { display:none; }
+  .ostat .ok { color:#22c55e; }
+  .ostat .err { color:#ef4444; }
+  .ostat .wait { color:var(--tx3); }
   .obar { height:6px; border-radius:3px; background:var(--layer2); overflow:hidden; margin-top:6px; }
   .obar > i { display:block; height:100%; width:0; background:linear-gradient(90deg,#3b82f6,#6366f1); transition:width .2s; }
 </style>
@@ -263,6 +268,7 @@
   <h3>Ollama 管理</h3>
   <div class="sub">服务启停 · 已加载模型 · 模型库 · 拉取 · GPU · 日志（仅本机，令牌校验）</div>
   <div class="osvc" id="osvc"><span class="dot"></span><span>读取中…</span></div>
+  <div class="ostat" id="ostat"></div>
   <div class="osec">已加载（占显存）</div>
   <div id="oloaded"></div>
   <div class="osec">模型库</div>
@@ -272,7 +278,13 @@
   <pre class="olog" id="opullog" style="display:none;margin-top:8px"></pre>
   <div class="osec">GPU 显存</div>
   <div id="ogpu"></div>
-  <div class="osec">日志（最近 40 行）</div>
+  <div class="osec" style="flex-wrap:wrap">
+    <span>日志 · journalctl -u ollama 最近 40 行</span>
+    <button class="btn" id="olog_refresh" style="padding:1px 8px;font-size:11px">刷新</button>
+    <label style="font-size:11px;color:var(--tx4);display:flex;align-items:center;gap:4px;cursor:pointer">
+      <input type="checkbox" id="olog_gin">含访问日志(GIN)
+    </label>
+  </div>
   <pre class="olog" id="olog">读取中…</pre>
 </div></div>
 
@@ -1066,9 +1078,9 @@ async function admPost(act, body) {
 const gb = n => (n / 1073741824).toFixed(1) + 'G';
 const flash = (msg, ms) => { $('stat').textContent = msg; setTimeout(() => { if ($('stat').textContent === msg) $('stat').textContent = ''; }, ms || 3500); };
 
-async function drawOllama() {
+async function drawOllama(silent) {
   let d;
-  try { d = await admGet('/__admin/state'); } catch (e) { $('olog').textContent = '管理接口不可用：' + e; return; }
+  try { d = await admGet('/__admin/state'); } catch (e) { if (!silent) $('olog').textContent = '管理接口不可用：' + e; return; }
   const svc = d.service || 'unknown';
   $('osvc').innerHTML = `<span class="dot ${svc === 'active' ? 'on' : 'off'}"></span>
     <b style="font-size:13px">Ollama ${svc === 'active' ? '运行中' : '已停止'}</b>
@@ -1115,7 +1127,9 @@ async function drawOllama() {
       <div class="obar"><i style="width:${pct}%"></i></div></div>`;
   }).join('') : '<div class="empty">无 GPU 信息</div>';
 
-  $('olog').textContent = (d.logs || []).join('\n') || '（无日志）';
+  let lines = d.logs || [];
+  if (!($('olog_gin') && $('olog_gin').checked)) lines = lines.filter(l => !l.includes('[GIN]'));
+  $('olog').textContent = lines.slice(-40).join('\n') || '（无日志）';
   if (d.ollama_error) $('olog').textContent = '⚠ Ollama 不可达：' + d.ollama_error + '\n\n' + $('olog').textContent;
 }
 
@@ -1129,11 +1143,26 @@ async function svcAction(what) {
 
 async function modelAction(act, name) {
   if (act === 'delete' && !confirm('删除模型 ' + name + '？（磁盘权重会被移除）')) return;
-  flash(act === 'load' ? '加载中…' : act === 'unload' ? '卸载中…' : '删除中…', 8000);
-  const r = await admPost(act, { name });
-  flash(r.error ? ('失败：' + r.error) : '完成', 3000);
+  const label = act === 'load' ? '加载' : act === 'unload' ? '卸载' : '删除';
+  const t0 = Date.now();
+  showInline(`<span class="wait">⏳ 正在${label} ${esc(name)}…</span>`);
+  flash(label + '中…', 60000);
+  // 操作期间每 1.5s 刷新面板，模型一进显存就能看到
+  const timer = setInterval(() => { if (Date.now() - t0 > 120000) clearInterval(timer); else drawOllama(true); }, 1500);
+  let r;
+  try {
+    r = await admPost(act, { name });
+  } finally {
+    clearInterval(timer);
+  }
+  const secs = ((Date.now() - t0) / 1000).toFixed(1);
+  if (r && r.error) { showInline(`<span class="err">✗ ${label}失败：${esc(r.error)}（${secs}s）</span>`);
+    flash('失败：' + r.error, 6000); }
+  else { showInline(`<span class="ok">✓ ${label}完成：${esc(name)}（${secs}s）</span>`);
+    flash(label + '完成', 3000); }
   ctxCacheReset(); drawOllama(); drawModelChips();
 }
+function showInline(html) { const el = $('ostat'); if (el) el.innerHTML = html; }
 
 async function pullModel() {
   const name = $('opullname').value.trim();
@@ -1235,8 +1264,15 @@ $('pm_save').onclick = () => saveParams(false);
 $('pm_saveload').onclick = () => saveParams(true);
 $('pm_clear').onclick = clearParams;
 
-$('btnollama').onclick = () => { $('omask').classList.add('on'); drawOllama(); };
-$('om_close').onclick = () => $('omask').classList.remove('on');
+$('olog_refresh').onclick = () => { showInline('<span class="wait">刷新中…</span>'); drawOllama(); };
+let panelTimer = null;
+$('btnollama').onclick = () => {
+  $('omask').classList.add('on');
+  drawOllama();
+  if (panelTimer) clearInterval(panelTimer);
+  panelTimer = setInterval(() => { if ($('omask').classList.contains('on')) drawOllama(true); }, 8000);
+};
+$('om_close').onclick = () => { if (panelTimer) { clearInterval(panelTimer); panelTimer = null; } $('omask').classList.remove('on'); };
 $('opullbtn').onclick = pullModel;
 
 init();
