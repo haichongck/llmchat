@@ -41,6 +41,10 @@ SERVICE_CONTROL = os.environ.get('LLMCHAT_SERVICE_CONTROL', '1') != '0'
 PROXY_ALLOW = [h.strip().lower() for h in
                os.environ.get('LLMCHAT_PROXY_ALLOW', '127.0.0.1,localhost,::1').split(',') if h.strip()]
 TOKEN = secrets.token_hex(24)
+# 允许浏览/导入 gguf 的根目录（可用 LLMCHAT_IMPORT_ROOTS 覆盖，逗号分隔）
+IMPORT_ROOTS = [os.path.realpath(os.path.expanduser(p))
+                for p in (os.environ.get('LLMCHAT_IMPORT_ROOTS') or '~,/mnt,/media,/srv,/opt').split(',')
+                if p.strip()]
 
 # 每个模型的启动参数（持久化到 model-params.json）
 PARAMS_FILE = os.path.join(ROOT, 'model-params.json')
@@ -145,6 +149,38 @@ def dir_free(path):
                 break
             cur = parent
     return 0, 0
+
+
+def path_allowed(p):
+    ap = os.path.realpath(os.path.expanduser(str(p or '')))
+    for root in IMPORT_ROOTS:
+        if ap == root or ap.startswith(root.rstrip('/') + '/'):
+            return ap
+    return None
+
+
+def gguf_scan(dirpath):
+    ap = path_allowed(dirpath)
+    if not ap:
+        return {'error': '目录不在允许范围内（LLMCHAT_IMPORT_ROOTS）'}
+    if not os.path.isdir(ap):
+        return {'error': '目录不存在'}
+    dirs, files = [], []
+    try:
+        for e in sorted(os.scandir(ap), key=lambda x: x.name.lower()):
+            if e.name.startswith('.'):
+                continue
+            try:
+                if e.is_dir():
+                    dirs.append(e.name)
+                elif e.is_file() and e.name.lower().endswith('.gguf'):
+                    st = e.stat()
+                    files.append({'name': e.name, 'path': e.path, 'size': st.st_size})
+            except OSError:
+                continue
+    except Exception as e:  # noqa: BLE001
+        return {'error': str(e)}
+    return {'dir': ap, 'dirs': dirs[:200], 'files': files[:200]}
 
 
 def models_info():
@@ -319,6 +355,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.json_out(403, {'error': '仅允许同源访问'})
             return self.json_out(200, {'gpus': gpu_snapshot(),
                                        'mem': mem_snapshot(), 'cpu': cpu_snapshot()})
+        if path == '/__admin/gguf':
+            if not self.caller_ok():
+                return self.json_out(403, {'error': '仅允许同源访问'})
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            return self.json_out(200, gguf_scan((q.get('dir') or ['~'])[0]))
         if path == '/__config':
             return self.json_out(200, {'ollama': OLLAMA, 'port': PORT,
                                        'admin': ADMIN_ENABLED, 'serviceControl': SERVICE_CONTROL})
@@ -438,6 +479,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 ollama_post('/api/generate', payload, timeout=600)
                 return self.json_out(200, {'ok': True, 'model': name, 'loaded': act == 'load',
                                            'options': opts, 'keep_alive': keep})
+            if act == 'import':
+                return self.admin_import(data)
             if act == 'service':
                 what = str(data.get('action') or '').strip()
                 if what not in ('start', 'stop', 'restart'):
@@ -454,6 +497,55 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001
             return self.json_out(500, {'error': str(e)})
         return self.json_out(404, {'error': 'unknown'})
+
+    def admin_import(self, data):
+        f = path_allowed(data.get('file'))
+        if not f or not os.path.isfile(f) or not f.lower().endswith('.gguf'):
+            return self.json_out(400, {'error': 'GGUF 文件不存在或路径不在允许范围'})
+        raw_name = str(data.get('name') or os.path.splitext(os.path.basename(f))[0]).strip().lower()
+        base, _, tag = raw_name.partition(':')          # 冒号是 tag 分隔符，不能当非法字符清掉
+        base = re.sub(r'[^a-z0-9._/-]+', '-', base).strip('-') or 'imported'
+        tag = re.sub(r'[^a-z0-9._-]+', '-', tag).strip('-') or 'latest'
+        name = base + ':' + tag
+        mm = path_allowed(data.get('mmproj')) if data.get('mmproj') else None
+        lines = ['FROM ' + f]
+        if mm and os.path.isfile(mm):
+            lines.append('FROM ' + mm)
+        mf = os.path.join(ROOT, '.import-%d.Modelfile' % int(time.time() * 1000))
+        with open(mf, 'w', encoding='utf-8') as fh:
+            fh.write('\n'.join(lines) + '\n')
+
+        self.admin = True
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/x-ndjson; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+
+        def emit(obj):
+            try:
+                self.wfile.write((json.dumps(obj, ensure_ascii=False) + '\n').encode())
+                self.wfile.flush()
+            except Exception:  # noqa: BLE001
+                pass
+
+        emit({'status': 'creating', 'name': name, 'file': f})
+        try:
+            proc = subprocess.Popen(['ollama', 'create', name, '-f', mf],
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for line in proc.stdout:
+                line = line.strip()
+                if line:
+                    emit({'status': 'log', 'line': line[:300]})
+            rc = proc.wait(timeout=3600)
+            emit({'status': 'success', 'name': name} if rc == 0
+                 else {'error': 'ollama create 退出码 %d' % rc})
+        except Exception as e:  # noqa: BLE001
+            emit({'error': str(e)})
+        finally:
+            try:
+                os.remove(mf)
+            except OSError:
+                pass
 
     def admin_pull(self, name):
         if not name:
