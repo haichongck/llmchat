@@ -268,6 +268,9 @@
   .oitem .btn { padding:4px 10px; font-size:12px; }
   .opull { display:flex; gap:8px; }
   .opull input { flex:1; background:var(--side); border:1px solid var(--line2); border-radius:var(--r-sm); padding:8px 10px; font-size:13px; color:var(--tx2); outline:none; }
+  .opullprog { margin-top:8px; }
+  .opullprog .obar { height:6px; border-radius:3px; background:var(--layer2); overflow:hidden; }
+  .opullprog .obar > i { display:block; height:100%; width:0; background:linear-gradient(90deg,#3b82f6,#6366f1); transition:width .25s; }
   .pullpath { margin-top:7px; font-size:11px; color:var(--tx4); font-family:var(--mono);
               display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .pullpath b { color:var(--tx3); font-weight:500; }
@@ -379,6 +382,10 @@
   <div class="osec">拉取新模型</div>
   <div class="opull"><input id="opullname" placeholder="如 qwen3:8b / llama3.2:3b"><button class="btn primary" id="opullbtn">拉取</button></div>
   <div class="pullpath" id="opullpath"></div>
+  <div class="opullprog" id="opullprog" style="display:none">
+    <div class="obar"><i id="opullbar"></i></div>
+    <div class="pullpath" id="opullstats"></div>
+  </div>
   <pre class="olog" id="opullog" style="display:none;margin-top:8px"></pre>
   <div class="osec" style="flex-wrap:wrap">
     <span>日志 · journalctl -u ollama 最近 40 行</span>
@@ -1637,38 +1644,76 @@ async function pullModel() {
   const name = $('opullname').value.trim();
   if (!name) return;
   const t = await admToken();
-  const log = $('opullog');
+  const log = $('opullog'), prog = $('opullprog'), bar = $('opullbar'), stats = $('opullstats');
   log.style.display = 'block'; log.textContent = '开始拉取 ' + name;
+  prog.style.display = 'block'; bar.style.width = '0%'; stats.textContent = '解析清单…';
   $('opullbtn').disabled = true;
+
+  const layers = {};                 // digest → { total, completed }
+  let errMsg = '', ok = false, statusText = '', lastRender = 0;
+  const renderProg = () => {
+    const tot = Object.values(layers).reduce((a, l) => a + (l.total || 0), 0);
+    const done = Object.values(layers).reduce((a, l) => a + (l.completed || 0), 0);
+    const pct = tot ? Math.min(100, Math.round(done / tot * 100)) : 0;
+    bar.style.width = pct + '%';
+    const mb = n => (n / 1048576).toFixed(1);
+    stats.textContent = tot
+      ? `${statusText || '下载中'} · ${pct}% · ${mb(done)}/${mb(tot)} MB · ${Object.keys(layers).length} 个分片`
+      : (statusText || '准备中…');
+  };
+
   try {
     const r = await fetch('/__admin/pull', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': t },
       body: JSON.stringify({ name: name }),
     });
-    const rd = r.body.getReader(), dec = new TextDecoder();
-    let buf = '', last = '';
-    for (;;) {
-      const { done, value } = await rd.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split('\n'); buf = lines.pop();
-      for (const ln of lines) {
-        if (!ln.trim()) continue;
-        let j; try { j = JSON.parse(ln); } catch { continue; }
-        if (j.error) { log.textContent += '\n[错误] ' + j.error; continue; }
-        const total = j.total || 0, dn = j.completed || 0;
-        last = (j.status || '') + (total ? ' ' + Math.round(dn / total * 100) + '%' : '');
-        log.textContent = log.textContent.split('\n').slice(0, 2).join('\n') + '\n' + last;
-        log.scrollTop = log.scrollHeight;
+    if (!r.ok) {
+      const txt = await r.text();
+      errMsg = 'HTTP ' + r.status + ' ' + txt.slice(0, 200);
+    } else {
+      const rd = r.body.getReader(), dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await rd.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const ln of lines) {
+          if (!ln.trim()) continue;
+          let j; try { j = JSON.parse(ln); } catch { continue; }
+          if (j.error) { errMsg = j.error; continue; }
+          if (j.digest && j.total) {
+            layers[j.digest] = { total: j.total, completed: j.completed || 0 };
+          }
+          if (j.status) {
+            statusText = j.status === 'success' ? '完成'
+              : (j.status.startsWith('pulling ') ? '下载中' : j.status);
+            if (j.status === 'success') ok = true;
+          }
+          const now = Date.now();
+          if (now - lastRender > 120) { lastRender = now; renderProg(); }
+        }
       }
+      renderProg();
     }
-    log.textContent = '拉取完成：' + name;
   } catch (e) {
-    log.textContent += '\n[失败] ' + e;
+    errMsg = String(e && (e.message || e));
   } finally {
     $('opullbtn').disabled = false;
+  }
+
+  if (errMsg) {
+    bar.style.width = '100%'; bar.style.background = '#ef4444';
+    stats.innerHTML = '<span style="color:#ef4444">✗ 拉取失败：' + esc(errMsg) + '</span>';
+    log.textContent = '拉取失败：' + errMsg;
+  } else if (ok) {
+    bar.style.width = '100%';
+    stats.textContent = '✓ 拉取完成：' + name;
+    log.textContent = '拉取完成：' + name;
     drawOllama();
+  } else {
+    stats.textContent = '已结束但未收到 success 事件（' + (statusText || '未知') + '）';
   }
 }
 
