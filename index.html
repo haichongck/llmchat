@@ -1709,9 +1709,15 @@ async function modelAction(act, name) {
     flash('失败：' + emsg, 6000); }
   else {
     const ev = (r && Array.isArray(r.evicted)) ? r.evicted : [];
-    const extra = ev.length
-      ? `<span class="wait"> · Ollama 按显存逐出：${esc(ev.map(x => aliasMap[x] || x).join('、'))}</span>`
-      : '';
+    const rs = (r && Array.isArray(r.restored)) ? r.restored : [];
+    const nm2 = x => aliasMap[x] || x;
+    let extra = '';
+    if (ev.length) {
+      const left = ev.filter(x => !rs.includes(x));
+      extra += `<span class="wait"> · 显存不足逐出：${esc(ev.map(nm2).join('、'))}</span>`;
+      if (rs.length) extra += `<span class="ok"> · 已自动恢复常驻：${esc(rs.map(nm2).join('、'))}</span>`;
+      if (left.length) extra += `<span class="err"> · 未能恢复：${esc(left.map(nm2).join('、'))}</span>`;
+    }
     showInline(`<span class="ok">✓ ${label}完成：${esc(name)}（${secs}s）</span>${extra}`);
     flash(label + '完成' + (ev.length ? '（有模型被逐出）' : ''), 4000);
   }

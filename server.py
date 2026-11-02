@@ -288,6 +288,52 @@ def pull_worker(name):
             PULL['finished'] = time.time()
 
 
+def ollama_gpu_id():
+    """Ollama 服务钉的那张卡的 UUID（来自 systemd 环境），没有则用 index 0。"""
+    rc, env, _ = run([SYSTEMCTL, 'show', OLLAMA_UNIT, '-p', 'Environment'])
+    if rc == 0:
+        for tok in env.split():
+            if tok.startswith('CUDA_VISIBLE_DEVICES='):
+                return tok.split('=', 1)[1].strip('"').split(',')[0]
+    return '0'
+
+
+def gpu_used(target=None):
+    """只取 Ollama 那张卡的已用显存（MiB）。"""
+    if target is None:
+        target = ollama_gpu_id()
+    rc, out, _ = run(['nvidia-smi', '--id=' + str(target),
+                      '--query-gpu=memory.used', '--format=csv,noheader,nounits'])
+    if rc != 0 or not out.strip():
+        return None
+    try:
+        return int(out.split()[0])
+    except ValueError:
+        return None
+
+
+def wait_gpu_release(timeout=30.0):
+    """等 Ollama 那张卡的显存真正降下来（卸载后 ps 先消失、显存后释放）。"""
+    target = ollama_gpu_id()
+    t0 = time.time()
+    prev = gpu_used(target)
+    if prev is None:
+        return
+    stable = 0
+    while time.time() - t0 < timeout:
+        time.sleep(0.6)
+        cur = gpu_used(target)
+        if cur is None:
+            return
+        if prev - cur < 150:          # 这一轮没有明显下降
+            stable += 1
+            if stable >= 3:           # 连续约 2 秒不动，认为释放完了
+                return
+        else:
+            stable = 0
+        prev = cur
+
+
 def gpu_snapshot():
     rc, out, _ = run(['nvidia-smi',
         '--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu',
@@ -571,11 +617,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         cur = ollama_get('/api/ps').get('models', [])
                         if any((m.get('name') or m.get('model') or '') == name for m in cur):
                             warmup(name, 0, timeout=180)
-                            for _ in range(40):          # 最多等 20 秒
+                            for _ in range(40):          # 先从 /api/ps 里消失
                                 ps = ollama_get('/api/ps').get('models', [])
                                 if not any((m.get('name') or m.get('model') or '') == name for m in ps):
                                     break
                                 time.sleep(0.5)
+                            wait_gpu_release()           # 再等显存真正释放
                     except Exception:  # noqa: BLE001
                         pass
                 before = set()
@@ -585,7 +632,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 except Exception:  # noqa: BLE001
                     pass
                 warmup(name, keep, opts, timeout=600)
-                evicted = []
+                if act == 'unload':
+                    wait_gpu_release(timeout=15)
+                evicted, restored = [], []
                 if act == 'load':
                     try:
                         after = {(m.get('name') or m.get('model') or '')
@@ -593,8 +642,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         evicted = sorted(x for x in (before - after) if x and x != name)
                     except Exception:  # noqa: BLE001
                         pass
+                    # Ollama 卸载/加载期间记账滞后，可能把「本该常驻」的模型误逐出。
+                    # 内存实际够时把 keep_alive=-1 的那些再拉回来。
+                    allp = read_params()
+                    for m in evicted:
+                        ka = (allp.get(m) or {}).get('keep_alive')
+                        if ka == -1 or ka == '-1':
+                            try:
+                                warmup(m, -1, clean_options((allp.get(m) or {}).get('options')), timeout=300)
+                                restored.append(m)
+                            except Exception:  # noqa: BLE001
+                                pass
                 return self.json_out(200, {'ok': True, 'model': name, 'loaded': act == 'load',
-                                           'options': opts, 'keep_alive': keep, 'evicted': evicted})
+                                           'options': opts, 'keep_alive': keep,
+                                           'evicted': evicted, 'restored': restored})
             if act == 'import':
                 return self.admin_import(data)
             if act == 'service':
