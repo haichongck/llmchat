@@ -132,6 +132,25 @@
   #in { flex:1; resize:none; min-height:44px; max-height:180px; background:transparent; border:none; outline:none; padding:10px 0; color:var(--tx); font-size:15px; line-height:1.6; }
   #in::placeholder { color:var(--tx4); }
   #btnsend { border:none; border-radius:var(--r-md); padding:9px 18px; font-size:14px; }
+  .iconbtn { border-radius:var(--r-md); padding:8px 12px; font-size:16px; line-height:1; }
+  .chipbtn { flex:none; border:1px solid var(--line2); background:var(--layer2); color:var(--tx3);
+             border-radius:999px; padding:6px 12px; font-size:12px; white-space:nowrap; cursor:pointer; }
+  .chipbtn:hover { border-color:var(--line3); color:var(--tx2); }
+  .modelchip { max-width:240px; overflow:hidden; text-overflow:ellipsis; }
+  .metarow { display:flex; gap:14px; align-items:center; justify-content:space-between;
+             margin:6px 4px 0; font-size:11.5px; color:var(--tx4); font-family:var(--mono); min-height:16px; }
+  .pop { display:none; position:fixed; z-index:12; min-width:250px; max-width:340px; max-height:56vh; overflow:auto;
+         background:var(--layer1); border:1px solid var(--line2); border-radius:var(--r-md); padding:6px;
+         box-shadow:0 16px 40px rgba(0,0,0,.55); }
+  .pop.on { display:block; }
+  .pop-t { font-size:11px; color:var(--tx4); padding:6px 10px 4px; }
+  .pop-list { display:flex; flex-direction:column; }
+  .pop-item { display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:var(--r-sm);
+              font-size:13px; color:var(--tx2); cursor:pointer; }
+  .pop-item:hover { background:var(--layer2); }
+  .pop-item.sel { color:var(--acc); }
+  .pop-item .tag { margin-left:auto; font-size:10.5px; color:var(--tx4); }
+  .pop-note { font-size:11px; color:var(--tx4); padding:6px 10px 4px; border-top:1px solid var(--line1); margin-top:4px; }
   #btnstop { border-radius:var(--r-md); padding:9px 14px; font-size:13px; }
 
   /* ---------- 系统提示条 ---------- */
@@ -209,33 +228,46 @@
     <button class="btn" id="btnollama" style="width:100%;margin-top:6px">🦙 Ollama 管理</button></div>
 </aside>
 <main>
-  <header>
-    <span class="brand">本机LLM聊天</span>
-    <select id="model" title="选择模型"></select>
-    <span id="mparams" class="lbl mparams" title="模型启动参数（只读）。要改请去「Ollama 管理 → 参数」，保存并加载后这里同步"></span>
-    <label class="lbl" id="lbl_temp" style="display:none">温度 <input id="temp" type="number" value="0.1" step="0.1" min="0" max="2"></label>
-    <label class="lbl" id="lbl_max" style="display:none">最长 <input id="maxtok" type="number" value="4096" step="256"></label>
-    <label class="lbl" title="仅对 Ollama 模型生效：勾选后发送 think:false，避免模型把思考过程写进回答"><input id="nothink" type="checkbox" checked>免思考</label>
-    <button class="btn" id="btnsys">系统提示</button>
-    <button class="btn" id="btncompact" title="把早先对话压缩成摘要，保留最近 6 条">压缩上下文</button>
-    <button class="btn" id="btnclear">清空</button>
-    <span id="ctxbar" title="上次请求占用的上下文 / 模型窗口"><span id="ctxwrap"><span id="ctxfill"></span></span><span id="ctxpct"></span></span>
-    <span id="stat"></span>
-  </header>
+      <header>
+      <span class="brand">本机LLM聊天</span>
+      <span id="mparams" class="lbl mparams" title="模型启动参数（只读）。要改请去「Ollama 管理 → 参数」"></span>
+      <span style="flex:1"></span>
+      <button class="btn" id="btnsys">系统提示</button>
+      <button class="btn" id="btncompact" title="把早先对话压缩成摘要，保留最近 6 条">压缩上下文</button>
+      <button class="btn" id="btnclear">清空</button>
+      <span id="stat"></span>
+      <!-- 兼容层：模型/推理等控件已移到输入区，这里保留供既有逻辑复用 -->
+      <span style="display:none">
+        <select id="model" title="选择模型"></select>
+        <input id="nothink" type="checkbox" checked>
+        <label id="lbl_temp">温度 <input id="temp" type="number" value="0.1" step="0.1" min="0" max="2"></label>
+        <label id="lbl_max">最长 <input id="maxtok" type="number" value="4096" step="256"></label>
+        <span id="ctxbar"><span id="ctxwrap"><span id="ctxfill"></span></span><span id="ctxpct"></span></span>
+      </span>
+    </header>
   <div class="sys" id="sysbox"><div class="box"><textarea id="sys" placeholder="系统提示（可选，按会话保存）"></textarea></div></div>
   <div id="chatwrap"><div id="chat"></div></div>
-  <footer>
-    <div class="finwrap">
-      <div id="attach" class="attach"></div>
-      <div class="fin">
-        <button class="btn" id="btnattach" title="上传图片（也可直接粘贴或拖入图片）">＋</button>
-        <textarea id="in" rows="1" placeholder="输入消息，Enter 发送 / Shift+Enter 换行"></textarea>
-        <button class="btn primary" id="btnsend">发送</button>
-        <button class="btn" id="btnstop" style="display:none">停止</button>
+      <footer>
+      <div class="finwrap">
+        <div id="attach" class="attach"></div>
+        <div class="fin">
+          <button class="btn iconbtn" id="btnattach" title="上传图片（也可直接拖入或粘贴）">＋</button>
+          <button class="chipbtn" id="btnthink" title="推理强度：关 / 低 / 中 / 高">推理：中</button>
+          <textarea id="in" rows="1" placeholder="发消息…（Enter 发送 / Shift+Enter 换行，可粘贴或拖入图片）"></textarea>
+          <button class="chipbtn modelchip" id="btnmodel" title="切换模型">模型 ▾</button>
+          <button class="btn primary iconbtn" id="btnsend" title="发送">↑</button>
+          <button class="btn" id="btnstop" style="display:none">停止</button>
+        </div>
+        <div class="metarow">
+          <span id="mstat" class="meta"></span>
+          <span id="mstat2" class="meta dim"></span>
+        </div>
       </div>
-    </div>
-    <input type="file" id="filein" accept="image/*" multiple style="display:none">
-  </footer>
+      <input type="file" id="filein" accept="image/*" multiple style="display:none">
+      <div class="pop" id="popmodel"><div class="pop-t">选择模型</div><div class="pop-list" id="popmodel_list"></div></div>
+      <div class="pop" id="popthink"><div class="pop-t">推理强度</div><div class="pop-list" id="popthink_list"></div>
+        <div class="pop-note">Ollama：开=发 think，关=不思考；OpenAI 兼容：发送 reasoning_effort</div></div>
+    </footer>
 </main>
 
 <div class="mask" id="mask"><div class="modal">
@@ -330,6 +362,12 @@ let OLLAMA = 'http://127.0.0.1:11434';   // 启动时从 /__config 覆盖（可�
 let sessions = [], activeId = null, customModels = [], ollamaModels = [];
 let ctrl = null;
 const ctxCache = {};
+let paramsCache = null;
+function invalidateParams() { paramsCache = null; for (const k in ctxCache) delete ctxCache[k]; }
+async function getModelParams() {
+  if (!paramsCache) paramsCache = await admGet('/__admin/params');
+  return paramsCache || {};
+}
 const ctxCacheReset = () => { for (const k in ctxCache) delete ctxCache[k]; };
 
 const LS = { sess:'llmchat2:sessions', act:'llmchat2:active', models:'llmchat2:models',
@@ -521,7 +559,7 @@ function drawChat() {
     ctxWindow(rm).then(w => showCtx(s.usage.p + s.usage.c, w)); }
   else showCtx(0);
   $('chatwrap').scrollTop = $('chatwrap').scrollHeight;
-  drawModelChips();
+  drawModelChips(); refreshModelBtn(); updateMeta(s.usage || null);
 }
 function draw() { drawSessions(); drawChat(); }
 
@@ -585,13 +623,15 @@ async function callModel(rm, msgs, opts, onDelta, signal) {
   const stream = !!onDelta;
   let acc = '', th = '';
   if (rm.kind === 'ollama') {
-    const oopts = Object.assign({}, opts);
+    const saved = ((await getModelParams().catch(() => ({})))[rm.model] || {});
+    const oopts = Object.assign({}, saved.options || {}, opts);
     const omsgs = msgs.map(m => {
       const o = { role: m.role, content: m.content };
       if (m.imgs && m.imgs.length) o.images = m.imgs.map(b64);
       return o;
     });
     const obody = { model: rm.model, messages: omsgs, stream, options: oopts };
+    if (saved.keep_alive !== undefined) obody.keep_alive = saved.keep_alive;
     const nb = $('nothink');
     if (nb && nb.checked) obody.think = false;
     const r = await httpPost(rm.base + '/api/chat', { 'Content-Type':'application/json' },
@@ -599,7 +639,9 @@ async function callModel(rm, msgs, opts, onDelta, signal) {
     if (!r.ok) throw 'HTTP ' + r.status + ' ' + (await r.text()).slice(0, 300);
     if (!stream) { const j = await r.json();
       return { text: j.message.content, thinking: j.message.thinking || '',
-               usage: { p: j.prompt_eval_count, c: j.eval_count } }; }
+               usage: { p: j.prompt_eval_count, c: j.eval_count,
+                        ed: (j.eval_duration || 0) / 1e9, pd: (j.prompt_eval_duration || 0) / 1e9,
+                        cached: j.prompt_eval_cached_count } }; }
     const rd = r.body.getReader(), dec = new TextDecoder();
     let buf = '', usage = null;
     for (;;) {
@@ -613,7 +655,9 @@ async function callModel(rm, msgs, opts, onDelta, signal) {
         if (j.error) throw j.error;
         th += (j.message && j.message.thinking) || '';
         acc += (j.message && j.message.content) || '';
-        if (j.done) usage = { p: j.prompt_eval_count, c: j.eval_count };
+        if (j.done) usage = { p: j.prompt_eval_count, c: j.eval_count,
+          ed: (j.eval_duration || 0) / 1e9, pd: (j.prompt_eval_duration || 0) / 1e9,
+          cached: j.prompt_eval_cached_count };
       }
       onDelta(acc, th);
     }
@@ -629,6 +673,8 @@ async function callModel(rm, msgs, opts, onDelta, signal) {
   });
   const body = { model: rm.model, messages: cmsgs, stream,
     temperature: opts.temperature, max_tokens: opts.num_predict };
+  const ri = reasonInfo();
+  if (ri && ri.effort) body.reasoning_effort = ri.effort;
   if (stream) body.stream_options = { include_usage: true };
   const r = await httpPost(rm.base + '/chat/completions', headers, JSON.stringify(body), signal);
   if (!r.ok) throw 'HTTP ' + r.status + ' ' + (await r.text()).slice(0, 300);
@@ -733,6 +779,90 @@ async function migrateImgs() {
   if (n) { save(); drawChat(); $('stat').textContent = `已把 ${n} 张历史图片压成缩略图`; setTimeout(() => { $('stat').textContent = ''; }, 3500); }
 }
 
+/* ---------- 输入区：推理强度 / 模型弹层 / 统计 ---------- */
+const REASON_LEVELS = [
+  { key: 'off', name: '关', effort: null },
+  { key: 'low', name: '低', effort: 'low' },
+  { key: 'mid', name: '中', effort: 'medium' },
+  { key: 'high', name: '高', effort: 'high' },
+];
+let reasonLevel = 'mid';
+function reasonInfo() { return REASON_LEVELS.find(r => r.key === reasonLevel) || REASON_LEVELS[2]; }
+function applyReason() {
+  const r = reasonInfo();
+  if ($('nothink')) $('nothink').checked = (reasonLevel === 'off');   // 复用既有发送逻辑
+  if ($('btnthink')) $('btnthink').textContent = '推理：' + r.name;
+}
+function drawThinkPop() {
+  $('popthink_list').innerHTML = REASON_LEVELS.map(r =>
+    `<div class="pop-item${r.key === reasonLevel ? ' sel' : ''}" data-r="${r.key}">${r.key === reasonLevel ? '✓ ' : ''}${r.name}${r.key === 'off' ? '（不思考）' : ''}</div>`).join('');
+  $('popthink_list').querySelectorAll('[data-r]').forEach(el => el.onclick = () => {
+    reasonLevel = el.dataset.r;
+    localStorage.setItem('llmchat2:reason', reasonLevel);
+    applyReason(); closePops();
+  });
+}
+function modelLabel() {
+  const nm = ($('model').value || '').replace(/^ollama:/, '').replace(/^custom:/, '').replace(/:latest$/, '');
+  return nm.length > 22 ? nm.slice(0, 21) + '…' : nm;
+}
+function refreshModelBtn() { if ($('btnmodel')) $('btnmodel').textContent = (modelLabel() || '模型') + ' ▾'; }
+function drawModelPop() {
+  const cur = $('model').value;
+  const isVision = n => /vision|(^|[^a-z])vl([^a-z]|$)/i.test(n);
+  const oll = (autoOllama ? chatModels : []).map(m => {
+    const v = 'ollama:' + m.name;
+    return `<div class="pop-item${cur === v ? ' sel' : ''}" data-v="${esc(v)}">${cur === v ? '✓ ' : ''}${esc(m.name.replace(/:latest$/, ''))}<span class="tag">${(m.size / 1e9).toFixed(1)}G${isVision(m.name) ? ' · 看图' : ''}</span></div>`;
+  }).join('');
+  const cus = customModels.map(m => {
+    const v = 'custom:' + m.name;
+    return `<div class="pop-item${cur === v ? ' sel' : ''}" data-v="${esc(v)}">${cur === v ? '✓ ' : ''}${esc(m.name)}<span class="tag">自定义</span></div>`;
+  }).join('');
+  $('popmodel_list').innerHTML = (oll || '') + (cus || '') + '<div class="pop-item" data-add="1">＋ 添加自定义模型…</div>';
+  $('popmodel_list').querySelectorAll('[data-v]').forEach(el => el.onclick = () => {
+    $('model').value = el.dataset.v;
+    if ($('model').onchange) $('model').onchange();
+    closePops();
+  });
+  const add = $('popmodel_list').querySelector('[data-add]');
+  if (add) add.onclick = () => { closePops(); cancelEdit(); drawCM(); $('mask').classList.add('on'); };
+}
+function closePops() { $('popmodel').classList.remove('on'); $('popthink').classList.remove('on'); }
+function openPop(pop, btn) {
+  const r = btn.getBoundingClientRect();
+  pop.classList.add('on');
+  const w = pop.offsetWidth || 280;
+  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+  pop.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+}
+function updateMeta(usage) {
+  const rm = resolveModel($('model').value);
+  const used = usage ? (usage.p || 0) + (usage.c || 0) : 0;
+  const paint = w => {
+    const pct = w ? Math.round(used / w * 100) : 0;
+    const parts = ['上下文 ' + (used ? fmt(used) + '/' + fmt(w) + ' ' + pct + '%' : '—')];
+    if (usage) parts.push('本轮 ' + (usage.p || 0) + '→' + (usage.c || 0) + ' tok');
+    if (usage && usage.ed) parts.push((usage.c / usage.ed).toFixed(1) + ' tok/s');
+    if (usage && usage.p && usage.cached != null) parts.push('缓存 ' + Math.round(usage.cached / usage.p * 100) + '%');
+    $('mstat').textContent = parts.join(' · ');
+    showCtx(used, w);
+  };
+  if (rm) ctxWindow(rm).then(paint); else paint(0);
+}
+$('btnthink').onclick = e => {
+  e.stopPropagation(); drawThinkPop();
+  const wasOpen = $('popthink').classList.contains('on');
+  closePops(); if (!wasOpen) openPop($('popthink'), $('btnthink'));
+};
+$('btnmodel').onclick = e => {
+  e.stopPropagation(); drawModelPop();
+  const wasOpen = $('popmodel').classList.contains('on');
+  closePops(); if (!wasOpen) openPop($('popmodel'), $('btnmodel'));
+};
+document.addEventListener('click', e => {
+  if (!e.target.closest('.pop') && e.target.id !== 'btnthink' && e.target.id !== 'btnmodel') closePops();
+});
+
 /* ---------- 发送 ---------- */
 async function send() {
   const text = $('in').value.trim();
@@ -771,9 +901,11 @@ async function send() {
     acc = res.text; think = res.thinking || ''; usage = res.usage;
     a.setThinking(think);
     a.setContent(acc, true);
+    updateMeta(usage);
   } catch (e) {
     if (e && e.name === 'AbortError') { /* 手动停止 */ }
-    else acc += (acc ? '\n' : '') + '[请求失败] ' + (typeof e === 'string' ? e : e.message) + '（远程 API 需允许浏览器跨域 CORS）';
+    else { acc += (acc ? '\n' : '') + '[请求失败] ' + (typeof e === 'string' ? e : e.message) + '（远程 API 需允许浏览器跨域 CORS）';
+      $('mstat').textContent = '✗ 请求失败：' + (typeof e === 'string' ? e : (e.message || e)); }
     a.setContent(acc, true);
   } finally {
     if (acc) s.messages.push({role:'assistant', content:acc, thinking:think});
@@ -992,7 +1124,9 @@ async function init() {
   $('maxtok').value = load(LS.maxtok, 4096);
   if ($('nothink')) $('nothink').checked = load(LS.nothink, '1') !== '0';
   customModels = load(LS.models, []);
-  autoOllama = load('llmchat2:autoollama', 1) !== 0;   // load() 走 JSON.parse，读回来是数字
+  autoOllama = load('llmchat2:autoollama', 1) !== 0;
+  reasonLevel = load('llmchat2:reason', 'mid');
+  applyReason();   // load() 走 JSON.parse，读回来是数字
   if ($('cm_auto')) $('cm_auto').checked = autoOllama;
   try {   // 服务端配置：Ollama 地址 / 是否启用管理面板
     const cfg = await (await fetch('/__config')).json();
@@ -1030,7 +1164,7 @@ $('model').onchange = () => {
   s.model = $('model').value;
   const rm = resolveModel(s.model);
   if (rm && rm.max) $('maxtok').value = rm.max;
-  save(); drawSessions(); drawModelChips();
+  save(); drawSessions(); drawModelChips(); refreshModelBtn(); updateMeta(null);
 };
 $('temp').onchange = save; $('maxtok').onchange = save;
 /* 免思考 / 上下文档位：改动后清空窗口缓存并重绘上下文占比 */
@@ -1164,7 +1298,7 @@ async function modelAction(act, name) {
     flash('失败：' + r.error, 6000); }
   else { showInline(`<span class="ok">✓ ${label}完成：${esc(name)}（${secs}s）</span>`);
     flash(label + '完成', 3000); }
-  ctxCacheReset(); drawOllama(); drawModelChips();
+  invalidateParams(); drawOllama(); drawModelChips();
 }
 function showInline(html) { const el = $('ostat'); if (el) el.innerHTML = html; }
 
@@ -1278,7 +1412,7 @@ async function saveParams(thenLoad) {
   if (r.error) return flash('保存失败：' + r.error);
   $('pmask').classList.remove('on');
   flash('参数已保存' + (thenLoad ? '，正在按新参数加载…' : ''), 5000);
-  ctxCacheReset();
+  invalidateParams();
   if (thenLoad) await modelAction('load', pmModel); else { drawOllama(); drawModelChips(); }
 }
 async function clearParams() {
