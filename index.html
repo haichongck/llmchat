@@ -362,7 +362,7 @@
     <div class="f"><label>top_k</label><input id="pm_topk" type="number" placeholder="如 40"></div>
     <div class="f"><label>重复惩罚 repeat_penalty</label><input id="pm_rp" type="number" step="0.05" placeholder="如 1.1"></div>
     <div class="f"><label>最大输出 num_predict</label><input id="pm_np" type="number" placeholder="如 512"></div>
-    <div class="f"><label>常驻 keep_alive</label><select id="pm_keep">
+    <div class="f"><label>常驻 keep_alive（闲置超时后自动卸载）</label><select id="pm_keep">
       <option value="-1">永久常驻（-1）</option>
       <option value="0">立即卸载（0）</option>
       <option value="300">5 分钟（300 秒）</option>
@@ -679,7 +679,7 @@ async function callModel(rm, msgs, opts, onDelta, signal) {
       return o;
     });
     const obody = { model: rm.model, messages: omsgs, stream, options: oopts };
-    if (saved.keep_alive !== undefined) obody.keep_alive = saved.keep_alive;
+    obody.keep_alive = (saved.keep_alive !== undefined && saved.keep_alive !== null) ? saved.keep_alive : 300;
     const nb = $('nothink');
     if (nb && nb.checked) obody.think = false;
     const r = await httpPost(rm.base + '/api/chat', { 'Content-Type':'application/json' },
@@ -1373,6 +1373,16 @@ async function admPost(act, body) {
 const gb = n => (n / 1073741824).toFixed(1) + 'G';
 const flash = (msg, ms) => { $('stat').textContent = msg; setTimeout(() => { if ($('stat').textContent === msg) $('stat').textContent = ''; }, ms || 3500); };
 
+function keepLabel(exp) {
+  if (!exp) return '';
+  const t = Date.parse(exp);
+  if (!Number.isFinite(t)) return '';
+  const mins = (t - Date.now()) / 60000;
+  if (mins > 5256000) return '永久常驻';      // >10 年视为 forever
+  if (mins <= 0) return '即将释放';
+  if (mins < 60) return Math.ceil(mins) + ' 分钟后释放';
+  return Math.ceil(mins / 60) + ' 小时后释放';
+}
 async function drawOllama(silent) {
   let d;
   try { d = await admGet('/__admin/state'); } catch (e) { if (!silent) $('olog').textContent = '管理接口不可用：' + e; return; }
@@ -1391,7 +1401,7 @@ async function drawOllama(silent) {
   const paramBtn = n => `<button class="btn" data-params="${esc(n)}" title="${pm[n] ? '已设置自定义启动参数' : '设置启动参数'}">参数${pm[n] ? ' •' : ''}</button>`;
   $('oloaded').innerHTML = loaded.length ? loaded.map(m => `
     <div class="oitem"><span class="nm">${esc(m.name)}</span>
-      <span class="meta2">${gb(m.size_vram || 0)} · ctx ${m.context_length || '?'}</span>
+      <span class="meta2">${gb(m.size_vram || 0)} · ctx ${m.context_length || '?'} · ${keepLabel(m.expires_at)}</span>
       ${paramBtn(m.name)}
       <button class="btn" data-unload="${esc(m.name)}">卸载</button>
       <button class="btn" data-pin="${esc(m.name)}">常驻</button></div>`).join('')
@@ -1511,7 +1521,7 @@ function fillParamsForm(p) {
     .map(k => k + '=' + o[k]).join(',');
   const keepSel = $('pm_keep');
   keepSel.querySelectorAll('option[data-temp]').forEach(el => el.remove());   // 清掉上次的临时项
-  const savedKeep = (p && p.keep_alive !== undefined && p.keep_alive !== null) ? p.keep_alive : -1;
+  const savedKeep = (p && p.keep_alive !== undefined && p.keep_alive !== null) ? p.keep_alive : 300;
   keepSel.value = String(savedKeep);
   if (keepSel.value !== String(savedKeep)) {          // 自定义时长（如 10m）不在下拉里时补一个临时项
     const opt = document.createElement('option');
