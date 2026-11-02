@@ -1264,6 +1264,16 @@ function collectParams() {
 async function saveParams(thenLoad) {
   if (!pmModel) return;
   const body = Object.assign({ name: pmModel }, collectParams());
+  // 安全兜底：表单全空但服务端已有参数时，不覆盖（避免误清空）
+  if (!Object.keys(body.options).length) {
+    try {
+      const cur = ((await admGet('/__admin/params')) || {})[pmModel];
+      if (cur && cur.options && Object.keys(cur.options).length) {
+        body.options = cur.options;
+        showInline('<span class="wait">表单为空，已保留原有参数</span>');
+      }
+    } catch {}
+  }
   const r = await admPost('params', body);
   if (r.error) return flash('保存失败：' + r.error);
   $('pmask').classList.remove('on');
