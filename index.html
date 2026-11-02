@@ -268,6 +268,9 @@
   .oitem .btn { padding:4px 10px; font-size:12px; }
   .opull { display:flex; gap:8px; }
   .opull input { flex:1; background:var(--side); border:1px solid var(--line2); border-radius:var(--r-sm); padding:8px 10px; font-size:13px; color:var(--tx2); outline:none; }
+  .pullpath { margin-top:7px; font-size:11px; color:var(--tx4); font-family:var(--mono);
+              display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .pullpath b { color:var(--tx3); font-weight:500; }
   .olog { max-height:170px; overflow:auto; background:var(--side); border:1px solid var(--line1); border-radius:var(--r-sm); padding:8px 10px; font-family:var(--mono); font-size:11px; color:var(--tx3); white-space:pre-wrap; margin:0; }
   .ostat { font-size:12px; margin-top:8px; min-height:0; }
   .ostat:empty { display:none; }
@@ -375,6 +378,7 @@
   <div id="oorphans"></div>
   <div class="osec">拉取新模型</div>
   <div class="opull"><input id="opullname" placeholder="如 qwen3:8b / llama3.2:3b"><button class="btn primary" id="opullbtn">拉取</button></div>
+  <div class="pullpath" id="opullpath"></div>
   <pre class="olog" id="opullog" style="display:none;margin-top:8px"></pre>
   <div class="osec" style="flex-wrap:wrap">
     <span>日志 · journalctl -u ollama 最近 40 行</span>
@@ -1587,6 +1591,13 @@ async function drawOllama(silent) {
 
   let lines = d.logs || [];
   if (!($('olog_gin') && $('olog_gin').checked)) lines = lines.filter(l => !l.includes('[GIN]'));
+  const mi = d.models || {};
+  if ($('opullpath')) {
+    const gb = n => (n / 1073741824).toFixed(0) + ' GB';
+    $('opullpath').innerHTML = mi.dir
+      ? `下载到 <b>${esc(mi.dir)}</b>${mi.custom ? '（OLLAMA_MODELS 自定义）' : '（Ollama 默认位置）'} · 所在分区可用 <b>${gb(mi.free)}</b> / 共 ${gb(mi.total)}`
+      : '';
+  }
   $('olog').textContent = lines.slice(-40).join('\n') || '（无日志）';
   if (d.ollama_error) $('olog').textContent = '⚠ Ollama 不可达：' + d.ollama_error + '\n\n' + $('olog').textContent;
 }

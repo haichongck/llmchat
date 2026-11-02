@@ -109,6 +109,64 @@ def run(cmd, timeout=25):
         return -1, '', str(e)
 
 
+def ollama_home():
+    """取 ollama 服务进程所属用户的家目录（用于定位默认模型库）。"""
+    rc, out, _ = run([SYSTEMCTL, 'show', OLLAMA_UNIT, '-p', 'MainPID'])
+    pid = 0
+    if rc == 0 and '=' in out:
+        try:
+            pid = int(out.split('=', 1)[1].strip())
+        except ValueError:
+            pid = 0
+    uid = ''
+    if pid:
+        for line in _read(f'/proc/{pid}/status').splitlines():
+            if line.startswith('Uid:'):
+                uid = line.split()[1]
+                break
+    if uid:
+        for line in _read('/etc/passwd').splitlines():
+            parts = line.split(':')
+            if len(parts) > 5 and parts[2] == uid:
+                return parts[5]
+    return ''
+
+
+def dir_free(path):
+    """向上找第一个能 statvfs 的祖先目录，返回 (free, total)。"""
+    cur = path
+    for _ in range(6):
+        try:
+            st = os.statvfs(cur)
+            return st.f_bavail * st.f_frsize, st.f_blocks * st.f_frsize
+        except Exception:  # noqa: BLE001
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+    return 0, 0
+
+
+def models_info():
+    """Ollama 模型库位置与分区可用空间。"""
+    d = ''
+    rc, env, _ = run([SYSTEMCTL, 'show', OLLAMA_UNIT, '-p', 'Environment'])
+    if rc == 0:
+        for tok in env.split():
+            if tok.startswith('OLLAMA_MODELS='):
+                d = tok.split('=', 1)[1].strip('"')
+                break
+    custom = bool(d)
+    if not d:
+        home = ollama_home()
+        if home:
+            d = os.path.join(home, '.ollama', 'models')
+        else:
+            d = os.path.expanduser('~/.ollama/models')
+    free, total = dir_free(d)
+    return {'dir': d, 'free': free, 'total': total, 'custom': custom}
+
+
 def gpu_snapshot():
     rc, out, _ = run(['nvidia-smi',
         '--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu',
@@ -314,6 +372,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             'gpus': gpus,
             'logs': logs.splitlines() if rc3 == 0 else [],
             'params': read_params(),
+            'models': models_info(),
             'ollama_error': ps.get('error') or tags.get('error') or None,
         })
 
