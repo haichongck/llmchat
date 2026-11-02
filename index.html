@@ -150,6 +150,9 @@
   .pop-item:hover { background:var(--layer2); }
   .pop-item.sel { color:var(--acc); }
   .pop-item .tag { margin-left:auto; font-size:10.5px; color:var(--tx4); }
+  .pop-group { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--tx4);
+               padding:8px 10px 3px; margin-top:2px; }
+  .pop-group .tag { margin-left:auto; font-size:10px; opacity:.8; }
   .pop-note { font-size:11px; color:var(--tx4); padding:6px 10px 4px; border-top:1px solid var(--line1); margin-top:4px; }
   #btnstop { border-radius:var(--r-md); padding:9px 14px; font-size:13px; }
 
@@ -437,9 +440,27 @@ function normBase(u) {
   return u;
 }
 function resolveModel(v) {
+  if (!v) return null;
   if (v.startsWith('ollama:')) return { kind:'ollama', base: OLLAMA, model: v.slice(7), key:'' };
-  const c = customModels.find(m => m.name === v.slice(7));
-  return c ? { kind:c.type||'openai', base:normBase(c.base), model:c.model, key:c.key, ctx:c.ctx||8192, max:c.max||0 } : null;
+  if (v.startsWith('custom:')) {
+    const rest = v.slice(7);
+    const sep = rest.indexOf('::');
+    const nm = sep >= 0 ? rest.slice(0, sep) : rest;
+    const mid = sep >= 0 ? rest.slice(sep + 2) : '';
+    const c = customModels.find(m => m.name === nm);
+    if (!c) return null;
+    return { kind: c.type || 'openai', base: normBase(c.base), model: mid || c.model,
+             key: c.key, ctx: c.ctx || 8192, max: c.max || 0, provider: c.name };
+  }
+  return null;
+}
+/* #model 是兼容层里的隐藏 select：保证任意值都能放进去 */
+function ensureModelOption(v) {
+  const sel = $('model');
+  if (!sel || !v) return;
+  if (!Array.from(sel.options).some(o => o.value === v)) {
+    const o = document.createElement('option'); o.value = v; o.hidden = true; sel.appendChild(o);
+  }
 }
 async function ctxWindow(rm) {
   const ck = rm.kind === 'ollama' ? 'ollama:' + rm.model : 'custom:' + rm.model;
@@ -528,7 +549,7 @@ function drawSessions() {
   $('sessions').innerHTML = sessions.map(s =>
     `<div class="sess ${s.id===activeId?'on':''}" data-id="${s.id}">
        <div class="t">${esc(s.title)}</div>
-       <div class="m">${esc((s.model||'').replace(/^ollama:/,'').replace(/^custom:/,''))}</div>
+       <div class="m">${esc(modelShort(s.model))}</div>
        <button class="x" title="删除会话">✕</button>
      </div>`).join('');
   document.querySelectorAll('.sess').forEach(el => {
@@ -552,6 +573,7 @@ function drawChat() {
   }
   s.messages.forEach(m => addMsg(m.role === 'user' ? 'u' : 'a', m.content, true, m.thinking, m.imgs));
   $('sys').value = s.sys || '';
+  ensureModelOption(s.model);
   $('model').value = s.model || $('model').value;
   const rm0 = resolveModel($('model').value);
   if (rm0 && rm0.max) $('maxtok').value = rm0.max;
@@ -683,14 +705,17 @@ async function callModel(rm, msgs, opts, onDelta, signal) {
              thinking: j.choices[0].message.reasoning_content || '',
              usage: j.usage ? { p: j.usage.prompt_tokens, c: j.usage.completion_tokens } : null }; }
   const rd = r.body.getReader(), dec = new TextDecoder();
-  let buf = '', usage = null;
+  let buf = '', usage = null, rawAll = '', sawSse = false;
   for (;;) {
     const { done, value } = await rd.read();
     if (done) break;
-    buf += dec.decode(value, { stream: true });
+    const chunk = dec.decode(value, { stream: true });
+    rawAll += chunk;
+    buf += chunk;
     const lines = buf.split('\n'); buf = lines.pop();
     for (const ln of lines) {
       if (!ln.startsWith('data:')) continue;
+      sawSse = true;
       const p = ln.slice(5).trim();
       if (p === '[DONE]') continue;
       let j; try { j = JSON.parse(p); } catch { continue; }
@@ -700,6 +725,14 @@ async function callModel(rm, msgs, opts, onDelta, signal) {
       acc += (d && d.content) || '';
     }
     onDelta(acc, th);
+  }
+  if (!sawSse && rawAll.trim()) {          // 有些兼容服务无视 stream，直接回整段 JSON
+    try {
+      const j = JSON.parse(rawAll);
+      const m = (j.choices && j.choices[0] && j.choices[0].message) || {};
+      return { text: m.content || '', thinking: m.reasoning_content || '',
+               usage: j.usage ? { p: j.usage.prompt_tokens, c: j.usage.completion_tokens } : null };
+    } catch { /* 也不是 JSON，保持原样 */ }
   }
   return { text: acc, thinking: th, usage };
 }
@@ -802,30 +835,92 @@ function drawThinkPop() {
     applyReason(); closePops();
   });
 }
+function modelShort(v) {
+  if (!v) return '';
+  if (v.startsWith('ollama:')) return v.slice(7).replace(/:latest$/, '');
+  if (v.startsWith('custom:')) {
+    const rest = v.slice(7), sep = rest.indexOf('::');
+    return sep >= 0 ? rest.slice(sep + 2) : rest;
+  }
+  return v;
+}
 function modelLabel() {
-  const nm = ($('model').value || '').replace(/^ollama:/, '').replace(/^custom:/, '').replace(/:latest$/, '');
-  return nm.length > 22 ? nm.slice(0, 21) + '…' : nm;
+  const v = $('model').value || '';
+  let nm = v;
+  if (v.startsWith('ollama:')) nm = v.slice(7);
+  else if (v.startsWith('custom:')) {
+    const rest = v.slice(7), sep = rest.indexOf('::');
+    nm = sep >= 0 ? rest.slice(sep + 2) : ((customModels.find(m => m.name === rest) || {}).model || rest);
+  }
+  nm = nm.replace(/:latest$/, '');
+  return nm.length > 24 ? nm.slice(0, 23) + '…' : nm;
 }
 function refreshModelBtn() { if ($('btnmodel')) $('btnmodel').textContent = (modelLabel() || '模型') + ' ▾'; }
+const providerModels = {};   // 供应商 → { ts, ids }
+async function fetchProviderModels(p) {
+  const base = normBase(p.base);
+  const url = (p.type === 'ollama') ? base + '/api/tags' : base + '/models';
+  const headers = p.key ? { Authorization: 'Bearer ' + p.key } : {};
+  let j = null;
+  try { j = await (await fetch(url, { headers })).json(); } catch {
+    try {
+      j = await (await fetch('/__proxy', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method: 'GET', url, headers }) })).json();
+    } catch { j = null; }
+  }
+  let ids = [];
+  if (j) {
+    if (Array.isArray(j.data)) ids = j.data.map(x => x.id || x.model || x.name).filter(Boolean);
+    else if (Array.isArray(j.models)) ids = j.models.map(x => x.name || x.model).filter(Boolean);
+  }
+  if (!ids.length && p.model) ids = [p.model];
+  providerModels[p.name] = { ts: Date.now(), ids };
+  return ids;
+}
 function drawModelPop() {
   const cur = $('model').value;
   const isVision = n => /vision|(^|[^a-z])vl([^a-z]|$)/i.test(n);
-  const oll = (autoOllama ? chatModels : []).map(m => {
-    const v = 'ollama:' + m.name;
-    return `<div class="pop-item${cur === v ? ' sel' : ''}" data-v="${esc(v)}">${cur === v ? '✓ ' : ''}${esc(m.name.replace(/:latest$/, ''))}<span class="tag">${(m.size / 1e9).toFixed(1)}G${isVision(m.name) ? ' · 看图' : ''}</span></div>`;
-  }).join('');
-  const cus = customModels.map(m => {
-    const v = 'custom:' + m.name;
-    return `<div class="pop-item${cur === v ? ' sel' : ''}" data-v="${esc(v)}">${cur === v ? '✓ ' : ''}${esc(m.name)}<span class="tag">自定义</span></div>`;
-  }).join('');
-  $('popmodel_list').innerHTML = (oll || '') + (cus || '') + '<div class="pop-item" data-add="1">＋ 添加自定义模型…</div>';
+  const row = (v, label, tag, sel) =>
+    `<div class="pop-item${sel ? ' sel' : ''}" data-v="${esc(v)}">${sel ? '✓ ' : ''}${esc(label)}${tag ? `<span class="tag">${esc(tag)}</span>` : ''}</div>`;
+
+  let html = '';
+  if (autoOllama && chatModels.length) {
+    html += '<div class="pop-group">本机 Ollama</div>';
+    html += chatModels.map(m => {
+      const v = 'ollama:' + m.name;
+      return row(v, m.name.replace(/:latest$/, ''), (m.size / 1e9).toFixed(1) + 'G' + (isVision(m.name) ? ' · 看图' : ''), cur === v);
+    }).join('');
+  }
+  for (const p of customModels) {
+    const host = (normBase(p.base).replace(/^https?:\/\//, '') || '');
+    html += `<div class="pop-group">${esc(p.name)}<span class="tag">${esc(host)}</span></div>`;
+    const cached = providerModels[p.name];
+    const ids = (cached && cached.ids && cached.ids.length) ? cached.ids : [p.model];
+    html += ids.map(id => {
+      const v = 'custom:' + p.name + '::' + id;
+      return row(v, id, '', cur === v);
+    }).join('');
+  }
+  html += '<div class="pop-item" data-add="1">＋ 添加自定义模型…</div>';
+  $('popmodel_list').innerHTML = html;
+
   $('popmodel_list').querySelectorAll('[data-v]').forEach(el => el.onclick = () => {
+    ensureModelOption(el.dataset.v);
     $('model').value = el.dataset.v;
     if ($('model').onchange) $('model').onchange();
     closePops();
   });
   const add = $('popmodel_list').querySelector('[data-add]');
   if (add) add.onclick = () => { closePops(); cancelEdit(); drawCM(); $('mask').classList.add('on'); };
+
+  // 后台补全每个供应商的真实模型列表（60s 内不重复请求）
+  customModels.forEach(p => {
+    const c = providerModels[p.name];
+    if (c && Date.now() - c.ts < 60000) return;
+    fetchProviderModels(p).then(() => {
+      if ($('popmodel').classList.contains('on')) drawModelPop();
+    }).catch(() => {});
+  });
 }
 function closePops() { $('popmodel').classList.remove('on'); $('popthink').classList.remove('on'); }
 function openPop(pop, btn) {
