@@ -181,6 +181,24 @@ def ollama_get(path, timeout=10):
         return {'error': str(e)}
 
 
+def ollama_request(method, path, payload, timeout=120):
+    rq = urllib.request.Request(OLLAMA + path, data=json.dumps(payload).encode(),
+                                headers={'Content-Type': 'application/json'}, method=method)
+    with urllib.request.urlopen(rq, timeout=timeout) as r:
+        raw = r.read()
+        return json.loads(raw) if raw.strip() else {}
+
+
+def ollama_delete(path, payload, timeout=120):
+    """Ollama 新版本 /api/delete 只接受 DELETE；老版本用 POST，做个兼容回退。"""
+    try:
+        return ollama_request('DELETE', path, payload, timeout)
+    except urllib.error.HTTPError as e:
+        if e.code in (404, 405):
+            return ollama_request('POST', path, payload, timeout)
+        raise
+
+
 def ollama_post(path, payload, timeout=120):
     rq = urllib.request.Request(OLLAMA + path, data=json.dumps(payload).encode(),
                                 headers={'Content-Type': 'application/json'}, method='POST')
@@ -314,7 +332,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 name = str(data.get('name') or '').strip()
                 if not name:
                     return self.json_out(400, {'error': '缺少 name'})
-                ollama_post('/api/delete', {'model': name})
+                ollama_delete('/api/delete', {'model': name})
                 return self.json_out(200, {'ok': True, 'deleted': name})
             if act == 'params':
                 name = str(data.get('name') or '').strip()
