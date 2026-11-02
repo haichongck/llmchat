@@ -109,6 +109,25 @@ def run(cmd, timeout=25):
         return -1, '', str(e)
 
 
+def gpu_snapshot():
+    rc, out, _ = run(['nvidia-smi',
+        '--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu',
+        '--format=csv,noheader,nounits'])
+    if rc != 0:
+        return []
+    rows = []
+    for line in out.splitlines():
+        parts = [x.strip() for x in line.split(',')]
+        if len(parts) >= 6:
+            try:
+                rows.append({'index': parts[0], 'name': parts[1],
+                             'used': int(float(parts[2])), 'total': int(float(parts[3])),
+                             'util': parts[4], 'temp': parts[5]})
+            except ValueError:
+                continue
+    return rows
+
+
 def ollama_get(path, timeout=10):
     try:
         with urllib.request.urlopen(OLLAMA + path, timeout=timeout) as r:
@@ -174,6 +193,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # ---------- 路由 ----------
     def do_GET(self):
         path = self.path.split('?')[0]
+        if path == '/__gpu':
+            if not self.caller_ok():
+                return self.json_out(403, {'error': '仅允许同源访问'})
+            return self.json_out(200, {'gpus': gpu_snapshot()})
         if path == '/__config':
             return self.json_out(200, {'ollama': OLLAMA, 'port': PORT,
                                        'admin': ADMIN_ENABLED, 'serviceControl': SERVICE_CONTROL})

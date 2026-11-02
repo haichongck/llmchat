@@ -175,6 +175,19 @@
   #in::placeholder { color:var(--tx4); }
   #btnsend { border:none; border-radius:var(--r-md); padding:9px 18px; font-size:14px; }
   .iconbtn { border-radius:var(--r-md); padding:8px 12px; font-size:16px; line-height:1; }
+  /* 侧栏 GPU 面板 */
+  .gpu-panel { padding:10px 12px 12px; border-top:1px solid var(--line1); margin-top:auto; }
+  .gpu-title { display:flex; align-items:center; gap:6px; font-size:10.5px; letter-spacing:.06em;
+               color:var(--tx4); text-transform:uppercase; margin-bottom:8px; }
+  .gpu-ts { margin-left:auto; font-size:9.5px; opacity:.7; text-transform:none; letter-spacing:0; }
+  .gpu { margin-bottom:9px; }
+  .gpu:last-child { margin-bottom:0; }
+  .gpu-h { display:flex; align-items:baseline; gap:6px; font-size:11px; color:var(--tx3); }
+  .gpu-h .gpu-nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .gpu-h .gpu-util { font-family:var(--mono); font-size:10px; color:var(--tx4); }
+  .gpu-bar { height:4px; border-radius:2px; background:var(--layer2); overflow:hidden; margin:4px 0 3px; }
+  .gpu-bar > i { display:block; height:100%; width:0; background:var(--acc); transition:width .4s; }
+  .gpu-meta { display:flex; justify-content:space-between; font-family:var(--mono); font-size:9.5px; color:var(--tx4); }
   .chipbtn { flex:none; border:1px solid var(--line2); background:var(--layer2); color:var(--tx3);
              border-radius:999px; padding:6px 12px; font-size:12px; white-space:nowrap; cursor:pointer; }
   .chipbtn:hover { border-color:var(--line3); color:var(--tx2); }
@@ -269,6 +282,10 @@
 <aside>
   <div class="side-h"><b>会话</b><button class="btn" id="btnnew" title="新建会话">＋ 新建</button></div>
   <div id="sessions"></div>
+  <div class="gpu-panel" id="gpuPanel">
+    <div class="gpu-title">GPU <span id="gpuTs" class="gpu-ts"></span></div>
+    <div id="gpuList"></div>
+  </div>
   <div class="side-f"><button class="btn" id="btnmodels" style="width:100%">⚙ 自定义模型</button>
     <button class="btn" id="btnollama" style="width:100%;margin-top:6px">🦙 Ollama 管理</button></div>
 </aside>
@@ -358,8 +375,6 @@
   <div class="osec">拉取新模型</div>
   <div class="opull"><input id="opullname" placeholder="如 qwen3:8b / llama3.2:3b"><button class="btn primary" id="opullbtn">拉取</button></div>
   <pre class="olog" id="opullog" style="display:none;margin-top:8px"></pre>
-  <div class="osec">GPU 显存</div>
-  <div id="ogpu"></div>
   <div class="osec" style="flex-wrap:wrap">
     <span>日志 · journalctl -u ollama 最近 40 行</span>
     <button class="btn" id="olog_refresh" style="padding:1px 8px;font-size:11px">刷新</button>
@@ -903,6 +918,28 @@ function refreshModelBtn() {
     $('btnthinkq').style.display = effortSupported() ? '' : 'none';
   }
 }
+function shortGpuName(n) {
+  return String(n || '')
+    .replace(/NVIDIA\s+/i, '').replace(/GeForce\s+/i, '')
+    .replace(/Laptop GPU/i, '').replace(/\s*\/\s*/g, '/').trim();
+}
+async function drawGpuPanel() {
+  const box = $('gpuList');
+  if (!box) return;
+  let gpus = [];
+  try { gpus = (await (await fetch('/__gpu')).json()).gpus || []; } catch { gpus = []; }
+  if (!gpus.length) { box.innerHTML = '<div class="gpu-meta">无 GPU 信息</div>'; return; }
+  box.innerHTML = gpus.map(g => {
+    const pct = g.total ? Math.round(g.used / g.total * 100) : 0;
+    const color = pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : 'var(--acc,#3b82f6)';
+    return `<div class="gpu" title="GPU${g.index} ${esc(g.name)}">
+      <div class="gpu-h"><span class="gpu-nm">${esc(shortGpuName(g.name))}</span><span class="gpu-util">${esc(g.util)}% · ${esc(g.temp)}°C</span></div>
+      <div class="gpu-bar"><i style="width:${pct}%;background:${color}"></i></div>
+      <div class="gpu-meta"><span>${fmt(g.used)}/${fmt(g.total)} MiB</span><span>${pct}%</span></div>
+    </div>`;
+  }).join('');
+  if ($('gpuTs')) $('gpuTs').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+}
 function modelShort(v) {
   if (!v) return '';
   if (v.startsWith('ollama:')) return v.slice(7).replace(/:latest$/, '');
@@ -1389,6 +1426,7 @@ async function init() {
     save(); drawChat();
   }
   drawModelChips();
+  drawGpuPanel(); setInterval(drawGpuPanel, 5000);
   migrateImgs();   // 老会话里的大图一次性压成缩略图
 }
 $('model').onchange = () => {
@@ -1505,13 +1543,6 @@ async function drawOllama(silent) {
   $('olib').querySelectorAll('[data-params]').forEach(b => b.onclick = () => openParams(b.dataset.params));
   allParams = pm;
 
-  $('ogpu').innerHTML = (d.gpus || []).length ? (d.gpus || []).map(g => {
-    const pct = Math.round(g.used / g.total * 100);
-    return `<div class="oitem" style="display:block">
-      <div style="display:flex;gap:8px;align-items:center"><span class="nm">GPU${g.index} ${esc(g.name)}</span>
-        <span class="meta2">${g.used}/${g.total} MiB · ${g.util}% · ${g.temp}°C</span></div>
-      <div class="obar"><i style="width:${pct}%"></i></div></div>`;
-  }).join('') : '<div class="empty">无 GPU 信息</div>';
 
   let lines = d.logs || [];
   if (!($('olog_gin') && $('olog_gin').checked)) lines = lines.filter(l => !l.includes('[GIN]'));
@@ -1546,7 +1577,7 @@ async function modelAction(act, name) {
     flash('失败：' + r.error, 6000); }
   else { showInline(`<span class="ok">✓ ${label}完成：${esc(name)}（${secs}s）</span>`);
     flash(label + '完成', 3000); }
-  invalidateParams(); drawOllama(); drawModelChips();
+  invalidateParams(); drawOllama(); drawModelChips(); drawGpuPanel();
 }
 function showInline(html) { const el = $('ostat'); if (el) el.innerHTML = html; }
 
