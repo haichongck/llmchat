@@ -283,7 +283,7 @@
   <div class="side-h"><b>会话</b><button class="btn" id="btnnew" title="新建会话">＋ 新建</button></div>
   <div id="sessions"></div>
   <div class="gpu-panel" id="gpuPanel">
-    <div class="gpu-title">GPU <span id="gpuTs" class="gpu-ts"></span></div>
+    <div class="gpu-title">系统 <span id="gpuTs" class="gpu-ts"></span></div>
     <div id="gpuList"></div>
   </div>
   <div class="side-f"><button class="btn" id="btnmodels" style="width:100%">⚙ 自定义模型</button>
@@ -926,18 +926,41 @@ function shortGpuName(n) {
 async function drawGpuPanel() {
   const box = $('gpuList');
   if (!box) return;
-  let gpus = [];
-  try { gpus = (await (await fetch('/__gpu')).json()).gpus || []; } catch { gpus = []; }
-  if (!gpus.length) { box.innerHTML = '<div class="gpu-meta">无 GPU 信息</div>'; return; }
-  box.innerHTML = gpus.map(g => {
+  let d = {};
+  try { d = await (await fetch('/__sys')).json(); } catch { d = {}; }
+  const gpus = d.gpus || [];
+  const mem = d.mem || {};
+  const cpu = d.cpu || {};
+  const bar = (pct, color) => `<div class="gpu-bar"><i style="width:${Math.min(100, pct || 0)}%;background:${color}"></i></div>`;
+  const level = pct => pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : 'var(--acc,#3b82f6)';
+  const bytes = n => !n ? '0' : n >= 1073741824 ? (n / 1073741824).toFixed(1) + 'G' : Math.round(n / 1048576) + 'M';
+
+  let html = '';
+  // CPU
+  const cpuPct = cpu.percent || 0;
+  html += `<div class="gpu" title="${esc(cpu.model || '')}">
+    <div class="gpu-h"><span class="gpu-nm">CPU · ${cpu.cores || '?'} 核</span><span class="gpu-util">${cpuPct}%</span></div>
+    ${bar(cpuPct, level(cpuPct))}
+    <div class="gpu-meta"><span>负载 ${(cpu.load1 || 0).toFixed(2)}</span><span>${cpuPct}%</span></div>
+  </div>`;
+  // 内存
+  const memPct = mem.percent || 0;
+  html += `<div class="gpu" title="内存">
+    <div class="gpu-h"><span class="gpu-nm">内存</span><span class="gpu-util">${bytes(mem.used)}/${bytes(mem.total)}</span></div>
+    ${bar(memPct, level(memPct))}
+    <div class="gpu-meta"><span>可用 ${bytes(Math.max(0, (mem.total || 0) - (mem.used || 0)))}</span><span>${memPct}%</span></div>
+  </div>`;
+  // GPU
+  html += gpus.map(g => {
     const pct = g.total ? Math.round(g.used / g.total * 100) : 0;
-    const color = pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : 'var(--acc,#3b82f6)';
     return `<div class="gpu" title="GPU${g.index} ${esc(g.name)}">
       <div class="gpu-h"><span class="gpu-nm">${esc(shortGpuName(g.name))}</span><span class="gpu-util">${esc(g.util)}% · ${esc(g.temp)}°C</span></div>
-      <div class="gpu-bar"><i style="width:${pct}%;background:${color}"></i></div>
+      ${bar(pct, level(pct))}
       <div class="gpu-meta"><span>${fmt(g.used)}/${fmt(g.total)} MiB</span><span>${pct}%</span></div>
     </div>`;
   }).join('');
+
+  box.innerHTML = html || '<div class="gpu-meta">无系统信息</div>';
   if ($('gpuTs')) $('gpuTs').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
 }
 function modelShort(v) {
@@ -1426,7 +1449,7 @@ async function init() {
     save(); drawChat();
   }
   drawModelChips();
-  drawGpuPanel(); setInterval(drawGpuPanel, 5000);
+  drawGpuPanel(); setInterval(drawGpuPanel, 3000);
   migrateImgs();   // 老会话里的大图一次性压成缩略图
 }
 $('model').onchange = () => {

@@ -128,6 +128,51 @@ def gpu_snapshot():
     return rows
 
 
+def _read(path, default=''):
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            return f.read()
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def mem_snapshot():
+    info = {}
+    for line in _read('/proc/meminfo').splitlines():
+        parts = line.split(':')
+        if len(parts) == 2:
+            info[parts[0].strip()] = int(parts[1].strip().split()[0]) * 1024  # kB -> B
+    total = info.get('MemTotal', 0)
+    avail = info.get('MemAvailable', info.get('MemFree', 0))
+    used = max(0, total - avail)
+    return {'total': total, 'used': used,
+            'percent': round(used / total * 100, 1) if total else 0}
+
+
+def cpu_snapshot():
+    def sample():
+        line = _read('/proc/stat').splitlines()[0]
+        vals = [int(x) for x in line.split()[1:]]
+        idle = vals[3] + (vals[4] if len(vals) > 4 else 0) + (vals[7] if len(vals) > 7 else 0)
+        return sum(vals), idle
+    t1, i1 = sample()
+    time.sleep(0.15)
+    t2, i2 = sample()
+    dt, di = t2 - t1, i2 - i1
+    pct = round((1 - di / dt) * 100, 1) if dt > 0 else 0.0
+    model = ''
+    for line in _read('/proc/cpuinfo').splitlines():
+        if line.lower().startswith('model name'):
+            model = line.split(':', 1)[1].strip()
+            break
+    try:
+        load1 = float(_read('/proc/loadavg').split()[0])
+    except Exception:  # noqa: BLE001
+        load1 = 0.0
+    cores = os.cpu_count() or 0
+    return {'percent': max(0.0, min(100.0, pct)), 'cores': cores, 'model': model, 'load1': load1}
+
+
 def ollama_get(path, timeout=10):
     try:
         with urllib.request.urlopen(OLLAMA + path, timeout=timeout) as r:
@@ -193,10 +238,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # ---------- 路由 ----------
     def do_GET(self):
         path = self.path.split('?')[0]
-        if path == '/__gpu':
+        if path in ('/__sys', '/__gpu'):
             if not self.caller_ok():
                 return self.json_out(403, {'error': '仅允许同源访问'})
-            return self.json_out(200, {'gpus': gpu_snapshot()})
+            return self.json_out(200, {'gpus': gpu_snapshot(),
+                                       'mem': mem_snapshot(), 'cpu': cpu_snapshot()})
         if path == '/__config':
             return self.json_out(200, {'ollama': OLLAMA, 'port': PORT,
                                        'admin': ADMIN_ENABLED, 'serviceControl': SERVICE_CONTROL})
