@@ -516,6 +516,22 @@ async function classifyOllamaModels() {
   });
 }
 
+let refreshingModels = null;
+async function refreshOllamaModels() {
+  if (refreshingModels) return refreshingModels;
+  refreshingModels = (async () => {
+    try {
+      const r = await fetch(OLLAMA + '/api/tags');
+      ollamaModels = (await r.json()).models || [];
+      await classifyOllamaModels();
+      modelOptions();
+      refreshModelBtn();
+    } catch { /* 离线时保持旧列表 */ }
+    refreshingModels = null;
+  })();
+  return refreshingModels;
+}
+
 function modelOptions() {
   const hint = m => /vision|(^|[^a-z])vl([^a-z]|$)/i.test(m.name) ? ' · 可看图' : '';
   const built = (autoOllama ? chatModels : []).map(m => `<option value="ollama:${m.name}">${m.name}（本机 ${(m.size/1e9).toFixed(1)}G${hint(m)}）</option>`);
@@ -1101,7 +1117,15 @@ function bindMenuOnce() {
     const back = e.target.closest('[data-back]');
     if (back) { menuView = 'root'; renderMenu(); return; }
     const nav = e.target.closest('[data-nav]');
-    if (nav) { menuView = nav.dataset.nav; menuQuery = ''; renderMenu(); return; }
+    if (nav) {
+      menuView = nav.dataset.nav; menuQuery = ''; renderMenu();
+      if (menuView === 'models') {
+        refreshOllamaModels().then(() => {
+          if ($('popmenu').classList.contains('on') && menuView === 'models') renderMenu();
+        });
+      }
+      return;
+    }
     const add = e.target.closest('[data-add]');
     if (add) { closeMenu(); cancelEdit(); drawCM(); $('mask').classList.add('on'); return; }
     const row = e.target.closest('[data-v]');
@@ -1119,7 +1143,10 @@ function bindMenuOnce() {
   };
   pop.addEventListener('click', e => e.stopPropagation());
 }
-function openMenu() { bindMenuOnce(); renderMenu(); openPop($('popmenu'), $('btnmodel')); }
+function openMenu() {
+  bindMenuOnce(); renderMenu(); openPop($('popmenu'), $('btnmodel'));
+  refreshOllamaModels();
+}
 function closeMenu() { const p = $('popmenu'); if (p) p.classList.remove('on'); }
 $('btnthinkq').onclick = e => {
   e.stopPropagation();
@@ -1366,6 +1393,7 @@ $('cm_cleanup').onclick = async () => {
 };
 $('cm_auto').onchange = () => {
   autoOllama = $('cm_auto').checked;
+  refreshOllamaModels();
   localStorage.setItem('llmchat2:autoollama', autoOllama ? '1' : '0');
   modelOptions();
   const s = act();
@@ -1732,7 +1760,7 @@ async function importGguf() {
   } catch (e) { err = String(e && (e.message || e)); }
   $('ggufimport').disabled = false;
   if (err) { prog.innerHTML = '<span style="color:#ef4444">✗ 导入失败：' + esc(err) + '</span>'; }
-  else if (ok) { prog.textContent = '✓ 导入完成：' + name + (mm ? '（含视觉投影）' : ''); drawOllama(); }
+  else if (ok) { prog.textContent = '✓ 导入完成：' + name + (mm ? '（含视觉投影）' : ''); refreshOllamaModels(); drawOllama(); }
   else prog.textContent = '已结束，但没收到成功标记';
 }
 
@@ -1769,7 +1797,7 @@ function pollPull() {
     renderPull(snap);
     if (!snap || !snap.active) {
       clearInterval(pullTimer); pullTimer = null;
-      if (snap && snap.ok) drawOllama();
+      if (snap && snap.ok) { refreshOllamaModels(); drawOllama(); }
     }
   }, 1000);
 }
