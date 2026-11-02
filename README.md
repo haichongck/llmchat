@@ -1,3 +1,4 @@
+![ci](https://github.com/haichongck/llmchat/actions/workflows/ci.yml/badge.svg)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.8%2B-blue)
 ![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)

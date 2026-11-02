@@ -1,6 +1,7 @@
 # llmchat — a lightweight local LLM chat UI with a built-in Ollama manager
 
-[中文文档](README.md) · [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[中文文档](README.md) · [![ci](https://github.com/haichongck/llmchat/actions/workflows/ci.yml/badge.svg)
+![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 A **single-page frontend + single-file backend** (Python standard library only, zero `pip install`). It puts *chatting* and *Ollama operations* on the same page.
 
