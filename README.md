@@ -50,11 +50,21 @@
 
 ## 截图
 
-| 聊天 | Ollama 管理 |
+| 聊天（模型 / 推理等级、状态行、实时统计） | 模型菜单（按供应商分组） |
 |---|---|
-| ![chat](docs/screenshots/chat.png) | ![manager](docs/screenshots/ollama-manager.png) |
+| ![chat](docs/screenshots/chat.png) | ![menu](docs/screenshots/model-menu.png) |
 
-![params](docs/screenshots/model-params.png)
+| Ollama 管理（拉取 / 导入 GGUF / 常驻状态） | 启动参数（别名、显卡说明） |
+|---|---|
+| ![manager](docs/screenshots/ollama-manager.png) | ![params](docs/screenshots/model-params.png) |
+
+| 侧栏系统面板（CPU / 内存 / 每卡 GPU） | 代码块复制 + HTML 预览 |
+|---|---|
+| ![system](docs/screenshots/system-panel.png) | ![preview](docs/screenshots/html-preview.png) |
+
+拉取模型时显示真实进度（服务端后台任务，刷新页面不中断）：
+
+![pull](docs/screenshots/pull-progress.png)
 
 ## 快速开始
 

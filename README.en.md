@@ -11,13 +11,33 @@ A **single-page frontend + single-file backend** (Python standard library only, 
 
 **Chat** — multi-session with local persistence, streaming, Markdown/tables/code, KaTeX math, collapsible reasoning, per-session system prompt, context compaction, live context-usage bar.
 
+**Composer** — two-row layout, one menu for **model + reasoning effort**, live generation line, context ring, token/s and cache-hit stats in the footer.
+
+**Code blocks** — one-click copy, plus a sandboxed HTML preview (no same-origin access).
+
+**System panel** — CPU / memory / every GPU, refreshed every 3 s, with a badge on the GPU Ollama is bound to.
+
 **Images** — click **＋**, drag & drop, or paste. Images are downscaled to **1024 px for the model** (below that OCR accuracy collapses) while history keeps a **256 px thumbnail** (~85% storage saved).
 
-**Ollama manager** — service status and **start / stop / restart**, loaded models with VRAM and *effective* context plus **unload / pin**, model library with **load / delete**, **pull** with progress, GPU VRAM bars, last 40 log lines.
+**Ollama manager** — service status and **start / stop / restart**, loaded models with VRAM and *effective* context plus **unload / pin**, model library with **load / delete**, **pull** as a server-side background job with real progress (survives a page refresh), **import local GGUF files** (recursive scan + auto `mmproj`), delete unloads first, orphaned parameter entries can be cleaned up, last 40 log lines.
 
-**Per-model launch parameters** — `num_ctx`, `num_gpu`, `num_batch`, `num_thread`, `temperature`, `top_p`, `top_k`, `repeat_penalty`, `num_predict`, `keep_alive`, plus arbitrary extra options. Stored server-side in `model-params.json`. Loading applies them; if the model is already resident it is **unloaded first** so the new parameters actually take effect. The chat header only *displays* the effective values, so nothing silently overrides your launch config.
+**Per-model launch parameters** — `num_ctx`, `num_gpu`, `num_batch`, `num_thread`, `temperature`, `top_p`, `top_k`, `repeat_penalty`, `num_predict`, `keep_alive`, plus arbitrary extra options. Stored server-side in `model-params.json`, together with an optional **display alias** so long model names stay short in the UI. Loading applies them; if the model is already resident it is **unloaded first** so the new parameters actually take effect. The chat header only *displays* the effective values, so nothing silently overrides your launch config.
 
 **Custom models** — any OpenAI-compatible endpoint (vLLM, LM Studio, cloud APIs).
+
+## Screenshots
+
+| Chat (model / effort menu, live stats) | Model menu grouped by provider |
+|---|---|
+| ![chat](docs/screenshots/chat.png) | ![menu](docs/screenshots/model-menu.png) |
+
+| Ollama manager (pull / GGUF import / residency) | Launch parameters (alias, GPU note) |
+|---|---|
+| ![manager](docs/screenshots/ollama-manager.png) | ![params](docs/screenshots/model-params.png) |
+
+| System panel (CPU / memory / per-GPU) | Code copy + HTML preview |
+|---|---|
+| ![system](docs/screenshots/system-panel.png) | ![preview](docs/screenshots/html-preview.png) |
 
 ## Quick start
 
@@ -82,3 +102,4 @@ llmchat/
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md). Licensed under [MIT](LICENSE).
+
