@@ -419,6 +419,10 @@
   <h3 id="pm_title">启动参数</h3>
   <div class="sub">保存后点「加载」时按这些参数拉起模型。聊天页顶部只**读取**这些值（ctx / 温度 / 最长），不再单独设置——所以温度、上下文、最长输出都在这里改，留空则用模型默认值</div>
   <div class="frow">
+    <div class="f" style="flex:1"><label>显示名称（模型切换按钮/菜单上用，留空则显示完整模型名）</label>
+      <input id="pm_alias" maxlength="40" placeholder="如 frognano"></div>
+  </div>
+  <div class="frow">
     <div class="f"><label>上下文 num_ctx</label><input id="pm_ctx" type="number" placeholder="如 32768"></div>
     <div class="f"><label>GPU 层数 num_gpu</label><input id="pm_gpu" type="number" placeholder="99 = 全部卸载到 GPU"></div>
     <div class="f"><label>批大小 num_batch</label><input id="pm_batch" type="number" placeholder="如 512"></div>
@@ -930,6 +934,15 @@ const REASON_LEVELS = [
 let reasonLevel = 'mid';
 let menuView = 'root', menuQuery = '';
 const providerModels = {};   // 供应商 → { ts, ids }
+let aliasMap = {};           // 模型全名 → 自定义显示名
+async function loadAliases() {
+  try {
+    const p = await admGet('/__admin/params');
+    const m = {};
+    for (const k in (p || {})) { if (p[k] && p[k].alias) m[k] = p[k].alias; }
+    aliasMap = m;
+  } catch { /* 忽略 */ }
+}
 
 function reasonInfo() { return REASON_LEVELS.find(r => r.key === reasonLevel) || REASON_LEVELS[2]; }
 function effortSupported() {
@@ -1009,12 +1022,11 @@ async function drawGpuPanel() {
 }
 function modelShort(v) {
   if (!v) return '';
-  if (v.startsWith('ollama:')) return v.slice(7).replace(/:latest$/, '');
-  if (v.startsWith('custom:')) {
-    const rest = v.slice(7), sep = rest.indexOf('::');
-    return sep >= 0 ? rest.slice(sep + 2) : rest;
-  }
-  return v;
+  const full = v.startsWith('ollama:') ? v.slice(7)
+    : v.startsWith('custom:') ? (v.slice(7).includes('::') ? v.slice(7).split('::')[1] : v.slice(7))
+    : v;
+  if (aliasMap[full]) return aliasMap[full];
+  return full.replace(/:latest$/, '');
 }
 function modelLabel() {
   const nm = modelShort($('model').value || '');
@@ -1075,8 +1087,13 @@ function renderMenu() {
     const items = chatModels.filter(m => hit(m.name.replace(/:latest$/, '')));
     if (items.length) {
       body += '<div class="mgroup">本机 Ollama</div>';
-      body += items.map(m => modelRow('ollama:' + m.name, m.name.replace(/:latest$/, ''),
-        (m.size / 1e9).toFixed(1) + 'G' + (isVision(m.name) ? ' · 看图' : ''), cur === 'ollama:' + m.name)).join('');
+      body += items.map(m => {
+      const al = aliasMap[m.name];
+      const label = al || m.name.replace(/:latest$/, '');
+      const tag = al ? (m.name.replace(/:latest$/, '') + ' · ' + (m.size / 1e9).toFixed(1) + 'G')
+                     : ((m.size / 1e9).toFixed(1) + 'G' + (isVision(m.name) ? ' · 看图' : ''));
+      return modelRow('ollama:' + m.name, label, tag, cur === 'ollama:' + m.name);
+    }).join('');
     }
   }
   for (const pv of customModels) {
@@ -1146,6 +1163,10 @@ function bindMenuOnce() {
 function openMenu() {
   bindMenuOnce(); renderMenu(); openPop($('popmenu'), $('btnmodel'));
   refreshOllamaModels();
+  loadAliases().then(() => {
+    refreshModelBtn();
+    if ($('popmenu').classList.contains('on') && menuView === 'models') renderMenu();
+  });
 }
 function closeMenu() { const p = $('popmenu'); if (p) p.classList.remove('on'); }
 $('btnthinkq').onclick = e => {
@@ -1506,6 +1527,11 @@ async function init() {
   }
   drawModelChips();
   drawGpuPanel(); setInterval(drawGpuPanel, 3000);
+  loadAliases().then(() => {
+    refreshModelBtn();
+    if ($('popmenu') && $('popmenu').classList.contains('on')) renderMenu();
+    drawSessions();
+  });
   migrateImgs();   // 老会话里的大图一次性压成缩略图
 }
 $('model').onchange = () => {
@@ -1845,6 +1871,7 @@ const PM_KNOWN = ['num_ctx', 'num_gpu', 'num_batch', 'num_thread', 'temperature'
 function fillParamsForm(p) {
   const o = (p && p.options) || {};
   const set = (id, v) => { $(id).value = (v === undefined || v === null) ? '' : v; };
+  set('pm_alias', (p && p.alias) || '');
   set('pm_ctx', o.num_ctx); set('pm_gpu', o.num_gpu); set('pm_batch', o.num_batch);
   set('pm_thread', o.num_thread); set('pm_temp', o.temperature); set('pm_topp', o.top_p);
   set('pm_topk', o.top_k); set('pm_rp', o.repeat_penalty); set('pm_np', o.num_predict);
@@ -1891,7 +1918,8 @@ function collectParams() {
     else if (v !== '') o[k] = v;
   });
   const ka = $('pm_keep').value;
-  return { options: o, keep_alive: /^-?\d+$/.test(ka) ? Number(ka) : ka };
+  const alias = ($('pm_alias').value || '').trim();
+  return { options: o, keep_alive: /^-?\d+$/.test(ka) ? Number(ka) : ka, alias: alias };
 }
 async function saveParams(thenLoad) {
   if (!pmModel) return;

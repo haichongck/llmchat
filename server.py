@@ -545,6 +545,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 ka = data.get('keep_alive')
                 if ka not in (None, ''):
                     entry['keep_alive'] = norm_keep(ka)
+                alias = str(data.get('alias') or '').strip()[:40]
+                if alias:
+                    entry['alias'] = alias
                 allp = read_params()
                 allp[name] = entry
                 write_params(allp)
