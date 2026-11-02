@@ -249,7 +249,7 @@
       <div class="f"><label>上下文窗口（tokens）</label><input id="cm_ctx" type="number" value="8192"></div>
       <div class="f"><label>最大输出（tokens，可选）</label><input id="cm_max" type="number" placeholder="4096"></div>
     </div>
-    <div class="foot"><button class="btn" id="cm_cancel">取消</button><button class="btn primary" id="cm_add">添加模型</button></div>
+    <div class="foot"><button class="btn" id="cm_cleanup" title="逐个探测已添加的自定义模型，连接失败的可一键删除">测试并清理失效</button><span style="flex:1"></span><button class="btn" id="cm_cancel">取消</button><button class="btn primary" id="cm_add">添加模型</button></div>
   </div>
 </div></div>
 
@@ -346,11 +346,30 @@ function render(el, text, math) {
 }
 
 /* ---------- 模型 ---------- */
+let chatModels = [];   // 仅保留可用于对话的 Ollama 模型（排除纯 embedding）
+async function modelCaps(name) {
+  try {
+    const r = await fetch(OLLAMA + '/api/show', { method: 'POST', body: JSON.stringify({ name }) });
+    return (await r.json()).capabilities || [];
+  } catch { return []; }
+}
+async function classifyOllamaModels() {
+  const caps = await Promise.all(ollamaModels.map(m => modelCaps(m.name)));
+  chatModels = ollamaModels.filter((m, i) => {
+    const c = caps[i];
+    if (!c.length) return true;            // 拿不到能力信息时保留，避免误杀
+    return c.includes('completion') || c.includes('vision');
+  });
+}
+
 function modelOptions() {
   const hint = m => /vision|(^|[^a-z])vl([^a-z]|$)/i.test(m.name) ? ' · 可看图' : '';
-  const built = ollamaModels.map(m => `<option value="ollama:${m.name}">${m.name}（本机 ${(m.size/1e9).toFixed(1)}G${hint(m)}）</option>`);
+  const built = chatModels.map(m => `<option value="ollama:${m.name}">${m.name}（本机 ${(m.size/1e9).toFixed(1)}G${hint(m)}）</option>`);
   const cust = customModels.map(m => `<option value="custom:${m.name}">${m.name}（自定义）</option>`);
-  $('model').innerHTML = built.join('') + (cust.length ? '<optgroup label="自定义模型">' + cust.join('') + '</optgroup>' : '');
+  const addOpt = '<option value="__addmodel__">＋ 添加自定义模型…</option>';
+  $('model').innerHTML = built.join('')
+    + (cust.length ? '<optgroup label="自定义模型">' + cust.join('') + '</optgroup>' : '')
+    + addOpt;
 }
 function normBase(u) {
   u = (u || '').trim();
@@ -843,6 +862,29 @@ function readCMForm() {
            ctx: parseInt($('cm_ctx').value) || 8192, max: parseInt($('cm_max').value) || 0 };
 }
 function closeModal() { cancelEdit(); drawCM(); $('mask').classList.remove('on'); }
+$('cm_cleanup').onclick = async () => {
+  if (!customModels.length) return alert('还没有添加任何自定义模型');
+  $('cm_cleanup').disabled = true; $('cm_cleanup').textContent = '探测中…';
+  const bad = [];
+  for (const m of customModels) {
+    const base = normBase(m.base);
+    const url = (m.type || 'openai') === 'ollama' ? base + '/api/tags' : base + '/models';
+    const headers = m.key ? { Authorization: 'Bearer ' + m.key } : {};
+    let ok = false;
+    try { ok = (await fetch(url, { headers })).ok; } catch {
+      try {
+        ok = (await fetch('/__proxy', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method: 'GET', url, headers }) })).ok;
+      } catch { ok = false; }
+    }
+    if (!ok) bad.push(m.name);
+  }
+  $('cm_cleanup').disabled = false; $('cm_cleanup').textContent = '测试并清理失效';
+  if (!bad.length) return alert('全部自定义模型连接正常');
+  if (!confirm('以下模型连接失败，要删除吗？\n\n' + bad.join('\n'))) return;
+  customModels = customModels.filter(m => !bad.includes(m.name));
+  save(); modelOptions(); drawCM(); drawChat();
+};
 $('btnmodels').onclick = () => { cancelEdit(); drawCM(); $('mask').classList.add('on'); };
 $('cm_close').onclick = closeModal;
 $('cm_cancel').onclick = () => {
@@ -925,6 +967,7 @@ async function init() {
   try {
     const r = await fetch(OLLAMA + '/api/tags');
     ollamaModels = (await r.json()).models || [];
+    await classifyOllamaModels();
   } catch {}
   modelOptions();
   sessions = load(LS.sess, []);
@@ -942,6 +985,12 @@ async function init() {
   migrateImgs();   // 老会话里的大图一次性压成缩略图
 }
 $('model').onchange = () => {
+  if ($('model').value === '__addmodel__') {   // 下拉里的添加入口
+    const cur = (act() && act().model) || (chatModels[0] ? 'ollama:' + chatModels[0].name : '');
+    $('model').value = cur;
+    cancelEdit(); drawCM(); $('mask').classList.add('on');
+    return;
+  }
   const s = act(); if (!s) return;
   s.model = $('model').value;
   const rm = resolveModel(s.model);
