@@ -1,3 +1,8 @@
+![license](https://img.shields.io/badge/license-MIT-blue)
+![python](https://img.shields.io/badge/python-3.8%2B-blue)
+![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
+![platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-lightgrey)
+
 # llmchat · 轻量本地 LLM 聊天 + Ollama 管理面板
 
 **一个单文件前端 + 一个单文件后端（零第三方 Python 依赖），把「聊天」和「Ollama 运维」放进同一个页面。**
@@ -165,4 +170,4 @@ python3 server.py   # http://127.0.0.1:17001
 - [DOMPurify](https://github.com/cure53/DOMPurify) — Apache-2.0 / MPL-2.0
 - [KaTeX](https://katex.org/) — MIT
 
-本项目以 [MIT](LICENSE) 许可开源。
+本项目以 [MIT](LICENSE) 许可开源。欢迎提 [Issue](../../issues) 与 PR，提交前请看 [CONTRIBUTING.md](CONTRIBUTING.md)。
