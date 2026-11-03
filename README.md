@@ -33,6 +33,7 @@
 - 已加载模型：显存占用、实际上下文、**卸载 / 常驻**
 - 模型库：**加载 / 删除**
 - **拉取新模型**（流式进度条）
+- **切换模型目录**（选分区 → 写 systemd drop-in → 可迁移旧模型 → 重启 Ollama，需白名单脚本）
 - GPU 显存条（多卡分别显示占用/利用率/温度）
 - Ollama 日志尾部 40 行
 
@@ -115,6 +116,22 @@ sudo chmod 440 /etc/sudoers.d/llmchat-ollama && sudo visudo -c -f /etc/sudoers.d
 ```
 
 不想给这个权限就用 `LLMCHAT_SERVICE_CONTROL=0`，其余功能不受影响。
+
+## 切换模型目录（可选）
+
+模型库默认在 Ollama 服务用户的 `~/.ollama/models`。想换到大分区，装一个受控脚本 + 一条 sudoers 白名单（**只放行这一个脚本**，脚本内部自带路径白名单与系统目录黑名单）：
+
+```bash
+sudo install -m 755 scripts/ollama-models-dir.sh /usr/local/bin/ollama-models-dir.sh
+sudo tee /etc/sudoers.d/llmchat-ollama-models >/dev/null <<'EOF'
+你的用户名 ALL=(root) NOPASSWD: /usr/local/bin/ollama-models-dir.sh
+EOF
+sudo chmod 440 /etc/sudoers.d/llmchat-ollama-models && sudo visudo -c -f /etc/sudoers.d/llmchat-ollama-models
+```
+
+然后在管理面板点「更改目录」：选分区、填子目录、勾选是否迁移旧模型（rsync，旧目录保留），应用后自动写 drop-in（`OLLAMA_MODELS=…`）并重启 Ollama。
+
+注意：**别选 `/home/你的用户名/…` 下的路径**——Ollama 以独立系统用户运行，进不了别人的家目录（会 `permission denied`）。推荐 `/srv/…` 或 `/mnt/…`。脚本路径白名单可用 `LLMCHAT_MODELS_DIR_PREFIXES`（服务端）与脚本内 `ALLOW_PREFIXES` 调整。
 
 ## 作为 systemd 用户服务运行
 

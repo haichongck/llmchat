@@ -46,6 +46,14 @@ TOKEN = secrets.token_hex(24)
 PULL = {'active': False, 'name': '', 'status': '', 'error': '', 'ok': False,
         'started': 0.0, 'finished': 0.0, 'layers': {}}
 PULL_LOCK = threading.Lock()
+# 模型目录切换任务状态（sudo 白名单脚本 + systemd drop-in）
+MODELD = {'active': False, 'path': '', 'migrate': False, 'status': '', 'log': [],
+          'rc': None, 'ok': False, 'started': 0.0, 'finished': 0.0}
+MODELD_LOCK = threading.Lock()
+MODELS_DIR_SCRIPT = os.environ.get('LLMCHAT_MODELS_DIR_SCRIPT', '/usr/local/bin/ollama-models-dir.sh')
+MODELS_DIR_PREFIXES = [p.strip() for p in
+                       os.environ.get('LLMCHAT_MODELS_DIR_PREFIXES', '/home/kiki,/mnt,/srv,/opt').split(',')
+                       if p.strip()]
 # 允许浏览/导入 gguf 的根目录（可用 LLMCHAT_IMPORT_ROOTS 覆盖，逗号分隔）
 IMPORT_ROOTS = [os.path.realpath(os.path.expanduser(p))
                 for p in (os.environ.get('LLMCHAT_IMPORT_ROOTS') or '~,/mnt,/media,/srv,/opt').split(',')
@@ -218,6 +226,52 @@ def models_info():
             d = os.path.expanduser('~/.ollama/models')
     free, total = dir_free(d)
     return {'dir': d, 'free': free, 'total': total, 'custom': custom}
+
+
+def disk_mounts():
+    """真实磁盘分区列表（去掉 snap/tmpfs 等噪音），供选择模型目录。"""
+    rc, out, _ = run(['df', '-kPT', '-x', 'tmpfs', '-x', 'devtmpfs', '-x', 'squashfs',
+                      '-x', 'overlay', '-x', 'efivarfs', '-x', 'autofs'], timeout=10)
+    if rc != 0:
+        return []
+    mounts = []
+    for line in out.splitlines()[1:]:
+        p = line.split()
+        if len(p) < 7:
+            continue
+        dev, fstype, blocks, avail, mount = p[0], p[1], int(p[2]), int(p[4]), p[6]
+        if dev.startswith('/dev/loop') or mount.startswith('/snap'):
+            continue
+        mounts.append({'mount': mount, 'fstype': fstype,
+                       'size': blocks * 1024, 'free': avail * 1024})
+    mounts.sort(key=lambda m: -m['free'])
+    return mounts
+
+
+def models_dir_worker(path, migrate):
+    """后台跑 sudo 白名单脚本：写 drop-in、迁移模型、重启 ollama。"""
+    cmd = ['sudo', '-n', MODELS_DIR_SCRIPT, 'set', path]
+    if migrate:
+        cmd.append('migrate')
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True)
+        for line in proc.stdout:
+            line = line.rstrip()
+            if not line:
+                continue
+            with MODELD_LOCK:
+                MODELD['status'] = line[:200]
+                MODELD['log'].append(line[:300])
+                MODELD['log'] = MODELD['log'][-50:]
+        rc = proc.wait()
+        with MODELD_LOCK:
+            MODELD.update({'active': False, 'rc': rc, 'ok': rc == 0,
+                           'finished': time.time()})
+    except Exception as e:  # noqa: BLE001
+        with MODELD_LOCK:
+            MODELD.update({'active': False, 'ok': False, 'rc': -1,
+                           'status': str(e)[:200], 'finished': time.time()})
 
 
 def model_caps(name):
@@ -549,6 +603,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.json_out(200, {'token': TOKEN})
         if path == '/__admin/params':
             return self.json_out(200, read_params())
+        if path == '/__admin/models-dir/status':
+            with MODELD_LOCK:
+                return self.json_out(200, dict(MODELD))
         if path != '/__admin/state':
             return self.json_out(404, {'error': 'unknown'})
         ver = ollama_get('/api/version')
@@ -576,6 +633,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             'logs': logs.splitlines() if rc3 == 0 else [],
             'params': read_params(),
             'models': models_info(),
+            'mounts': disk_mounts(),
             'ollama_error': ps.get('error') or tags.get('error') or None,
         })
 
@@ -590,6 +648,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             if act == 'pull':
                 return self.admin_pull(str(data.get('name') or '').strip())
+            if act == 'models-dir':
+                p = os.path.normpath(str(data.get('path') or '').strip())
+                migrate = bool(data.get('migrate'))
+                if not p.startswith('/'):
+                    return self.json_out(400, {'error': '必须是绝对路径'})
+                if '..' in p.split(os.sep):
+                    return self.json_out(400, {'error': '路径含 ..'})
+                if not any(p == pref or p.startswith(pref + '/')
+                           for pref in MODELS_DIR_PREFIXES):
+                    return self.json_out(400, {'error': '只允许前缀: ' + ', '.join(MODELS_DIR_PREFIXES)})
+                with MODELD_LOCK:
+                    if MODELD['active']:
+                        return self.json_out(409, {'error': '已有切换任务在跑'})
+                    MODELD.update({'active': True, 'path': p, 'migrate': migrate,
+                                   'status': '准备中…', 'log': [], 'rc': None,
+                                   'ok': False, 'started': time.time(), 'finished': 0.0})
+                threading.Thread(target=models_dir_worker, args=(p, migrate),
+                                 daemon=True).start()
+                return self.json_out(200, {'ok': True, 'started': True,
+                                           'path': p, 'migrate': migrate})
             if act == 'delete':
                 name = str(data.get('name') or '').strip()
                 if not name:

@@ -1749,14 +1749,76 @@ async function drawOllama(silent) {
   let lines = d.logs || [];
   if (!($('olog_gin') && $('olog_gin').checked)) lines = lines.filter(l => !l.includes('[GIN]'));
   const mi = d.models || {};
+  MD.mounts = d.mounts || [];
   if ($('opullpath')) {
     const gb = n => (n / 1073741824).toFixed(0) + ' GB';
-    $('opullpath').innerHTML = mi.dir
-      ? `下载到 <b>${esc(mi.dir)}</b>${mi.custom ? '（OLLAMA_MODELS 自定义）' : '（Ollama 默认位置）'} · 所在分区可用 <b>${gb(mi.free)}</b> / 共 ${gb(mi.total)}`
+    let h = mi.dir
+      ? `下载到 <b>${esc(mi.dir)}</b>${mi.custom ? '（OLLAMA_MODELS 自定义）' : '（Ollama 默认位置）'} · 所在分区可用 <b>${gb(mi.free)}</b> / 共 ${gb(mi.total)} <button class="btn" onclick="mdToggle()">${MD.open ? '收起' : '更改目录'}</button>`
       : '';
+    if (MD.open) h += mdFormHtml(gb);
+    $('opullpath').innerHTML = h;
   }
   $('olog').textContent = lines.slice(-40).join('\n') || '（无日志）';
   if (d.ollama_error) $('olog').textContent = '⚠ Ollama 不可达：' + d.ollama_error + '\n\n' + $('olog').textContent;
+}
+
+// ---------- 模型目录切换 ----------
+const MD = { open: false, mounts: [], timer: null };
+
+function mdToggle() {
+  MD.open = !MD.open;
+  drawOllama(true);
+}
+
+function mdFormHtml(gb) {
+  const opts = MD.mounts.map(m =>
+    `<option value="${esc(m.mount)}">${esc(m.mount)}（可用 ${gb(m.free)} / 共 ${gb(m.size)}）</option>`).join('');
+  let prog = '';
+  if (MD.status && (MD.status.active || MD.status.rc !== null)) {
+    const s = MD.status;
+    const cls = s.active ? 'wait' : (s.ok ? 'ok' : 'err');
+    prog = `<div class="${cls}" style="margin-top:4px">${s.active ? '⏳ ' + esc(s.status || '进行中…') : (s.ok ? '✓ 已切换：' + esc(s.path) : '✗ 失败：' + esc(s.status || ('rc=' + s.rc)))}</div>`;
+    if ((s.log || []).length) prog += `<pre style="margin:6px 0 0;padding:6px 8px;background:var(--layer2);border-radius:6px;font-size:12px;max-height:120px;overflow:auto;white-space:pre-wrap">${esc(s.log.slice(-8).join('\n'))}</pre>`;
+  }
+  return `<div style="margin-top:6px;padding:8px;border:1px solid var(--bd);border-radius:8px">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <select id="md_mount" class="btn">${opts}</select>
+      <input id="md_sub" class="btn" style="width:180px" value="ollama-models" placeholder="子目录名">
+      <label class="btn"><input type="checkbox" id="md_migrate" checked> 迁移旧模型（rsync，旧目录保留）</label>
+      <button class="btn primary" onclick="mdSubmit()">应用（重启 Ollama）</button>
+    </div>
+    <div class="hint2" style="margin-top:4px">写入 systemd drop-in 并重启 Ollama；需已安装白名单脚本 /usr/local/bin/ollama-models-dir.sh</div>
+    ${prog}
+  </div>`;
+}
+
+async function mdSubmit() {
+  const mount = $('md_mount').value;
+  const sub = ($('md_sub').value || '').trim().replace(/^\/+|\/+$/g, '');
+  if (!sub || sub.includes('..')) { flash('子目录名不合法', 3000); return; }
+  const path = (mount === '/' ? '' : mount) + '/' + sub;
+  if (!confirm('模型目录将改为\n  ' + path + '\n并重启 Ollama（已加载模型会卸载重载）。\n' + ($('md_migrate').checked ? '会先迁移旧模型，旧目录保留。\n' : '') + '确认？')) return;
+  try {
+    const r = await admPost('models-dir', { path, migrate: $('md_migrate').checked });
+    if (!r.ok && r.error) { flash('失败：' + r.error, 5000); return; }
+    flash('切换任务已启动…', 4000);
+    mdPoll();
+  } catch (e) { flash('失败：' + e, 5000); }
+}
+
+function mdPoll() {
+  if (MD.timer) clearInterval(MD.timer);
+  MD.timer = setInterval(async () => {
+    try {
+      MD.status = await admGet('/__admin/models-dir/status');
+      drawOllama(true);
+      if (!MD.status.active) {
+        clearInterval(MD.timer); MD.timer = null;
+        if (MD.status.ok) flash('模型目录已切换：' + MD.status.path, 5000);
+        setTimeout(drawOllama, 3000);
+      }
+    } catch (e) { /* 服务重启中，下轮再试 */ }
+  }, 2000);
 }
 
 async function svcAction(what) {
