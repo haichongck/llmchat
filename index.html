@@ -1738,8 +1738,14 @@ async function drawOllama(silent) {
         <button class="btn" id="ocleanparams" title="${esc(orphans.join(', '))}">清理参数</button></div>`;
       $('ocleanparams').onclick = async () => {
         showInline('<span class="wait">正在清理失效参数…</span>');
-        for (const nm of orphans) { try { await admPost('params', { name: nm, remove: true }); } catch {} }
-        invalidateParams(); showInline('<span class="ok">✓ 已清理 ' + orphans.length + ' 条失效参数</span>');
+        let done = 0, fail = 0;
+        for (const nm of orphans) {
+          try { const r = await admPost('params', { name: nm, remove: true }); (r && r.ok) ? done++ : fail++; }
+          catch { fail++; }
+        }
+        invalidateParams();
+        showInline(fail ? '<span class="wait">清理完成 ' + done + ' 条，失败 ' + fail + ' 条，请刷新重试</span>'
+                        : '<span class="ok">✓ 已清理 ' + done + ' 条失效参数</span>');
         drawOllama();
       };
     } else ob.innerHTML = '';

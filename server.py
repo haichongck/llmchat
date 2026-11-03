@@ -894,8 +894,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 pass
 
-    def log_message(self, *args):
-        pass
+    def log_message(self, fmt, *args):
+        # 请求进 journal，排查"点了没反应"类问题（低流量服务，开销可忽略）
+        import sys as _sys
+        _sys.stderr.write('%s %s\n' % (self.command, self.path))
 
 
 class Server(socketserver.ThreadingTCPServer):
