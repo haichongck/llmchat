@@ -1068,6 +1068,8 @@ async function drawGpuPanel() {
   const bar = (pct, color) => `<div class="gpu-bar"><i style="width:${Math.min(100, pct || 0)}%;background:${color}"></i></div>`;
   const level = pct => pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : 'var(--acc,#3b82f6)';
   const bytes = n => !n ? '0' : n >= 1073741824 ? (n / 1073741824).toFixed(1) + 'G' : Math.round(n / 1048576) + 'M';
+  // GPU 显存：nvidia-smi 给的是 MiB，展示统一成 GB（按 1024 换算，与显卡标称一致）
+  const gpuMem = n => (n / 1024).toFixed(1).replace(/\.0$/, '') + ' GB';
 
   let html = '';
   // CPU
@@ -1093,7 +1095,7 @@ async function drawGpuPanel() {
     return `<div class="gpu" title="GPU${g.index} ${esc(g.name)}">
       <div class="gpu-h"><span class="gpu-nm">${esc(shortGpuName(g.name))}${mark}</span><span class="gpu-util">${esc(g.util)}% · ${esc(g.temp)}°C</span></div>
       ${bar(pct, level(pct))}
-      <div class="gpu-meta"><span>${fmt(g.used)}/${fmt(g.total)} MiB</span><span>${pct}%</span></div>
+      <div class="gpu-meta"><span>${gpuMem(g.used)}/${gpuMem(g.total)}</span><span>${pct}%</span></div>
     </div>`;
   }).join('');
 
